@@ -1,0 +1,6 @@
+anthropic
+pandas
+Pillow
+pdf2image
+python-docx
+openpyxl
