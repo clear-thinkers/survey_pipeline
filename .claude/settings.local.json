@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import anthropic, pandas, PIL, pdf2image, docx, openpyxl, dotenv; print\\(''all imports OK''\\)\")",
+      "Bash(conda env:*)",
+      "Bash(pip list:*)",
+      "Bash(conda run:*)",
+      "Bash(python -c \"import anthropic; print\\(''anthropic OK''\\)\")",
+      "Bash(python -c \"import pandas; print\\(''pandas OK''\\)\")",
+      "Bash(python -c \"import PIL; print\\(''Pillow OK''\\)\")",
+      "Bash(python -c \"import pdf2image; print\\(''pdf2image OK''\\)\")",
+      "Bash(python -c \"import docx; print\\(''python-docx OK''\\)\")",
+      "Bash(python -c \"import config; print\\(''API key set:'', bool\\(config.ANTHROPIC_API_KEY\\)\\); print\\(''EXTRACTION_MODEL:'', config.EXTRACTION_MODEL\\); print\\(''RAW_DIR:'', config.RAW_DIR\\); print\\(''EXTRACTED_DIR:'', config.EXTRACTED_DIR\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -m pip --version)",
+      "Bash(python -m pip install pdf2image python-docx openpyxl python-dotenv anthropic)",
+      "Bash(python scripts/01_extract.py)",
+      "Bash(python scripts/review.py s001)",
+      "Bash(python -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(list\\(d[''''fields''''].keys\\(\\)\\), indent=2\\)\\)\")",
+      "Bash(python scripts/02_compile.py)",
+      "Bash(python -c \":*)",
+      "Bash(python scripts/01_extract.py s012)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(python scripts/review.py s012)",
+      "Bash(python -c \"import json; d=json.load\\(open\\(''data/extracted/s012.json''\\)\\); print\\(list\\(d[''fields''].keys\\(\\)\\)\\)\")",
+      "Bash(python scripts/review.py s012 --force)"
+    ]
+  }
+}
