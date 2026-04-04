@@ -41,6 +41,7 @@ VALID_VALUES = {
     "q7_barriers":             "childcare, criminal_background, no_references, interview_skills, no_diploma, limited_experience, mental_physical_health, transportation, drugs_alcohol, not_getting_called, something_else, does_not_apply",
     "q8_left_job_reasons":     "found_better, quit, fired_attendance, fired_performance, seasonal, other, does_not_apply",
     "q8a_quit_reasons":        "low_pay_hours, schedule_conflict, lack_of_support, poor_conditions, mental_emotional_health, transportation, not_good_fit, personal_family, other",
+    "q9_primary_transport":    "public_transit, driving_self, rides_from_others, rideshare, active_transport, other",
     "q9_bank_account":         "checking, savings, had_in_past, never_had",
     "q9a_no_account_reasons":  "dont_know_how, fees, bad_credit, not_enough_money, min_balance_requirements, no_trusted_adult, tried_and_failed, other",
     "q11_program_helped":      "health_counseling, positive_relationships, handle_problems, housing, education, job, drivers_license, parenting, everyday_skills, decision_making, vital_documents, future, something_else, none",

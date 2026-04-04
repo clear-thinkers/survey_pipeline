@@ -4,10 +4,11 @@ For each PDF in data/raw/, convert pages to images, send to Claude Vision for
 field extraction, and save the result to data/extracted/{survey_id}.json.
 
 Usage:
-    python scripts/01_extract.py                ← process all PDFs (auto-detect type)
-    python scripts/01_extract.py s001           ← single file, auto-detect type (IL)
-    python scripts/01_extract.py s012           ← single file, auto-detect type (412YZ)
-    python scripts/01_extract.py s012 412YZ     ← single file, explicit type override
+    python scripts/01_extract.py                    ← process all PDFs (auto-detect type)
+    python scripts/01_extract.py s001               ← single file, auto-detect type
+    python scripts/01_extract.py s011 s020          ← range of files, auto-detect type
+    python scripts/01_extract.py s012 412YZ         ← single file, explicit type override
+    python scripts/01_extract.py s011 s020 412YZ    ← range + explicit type override
 """
 
 import base64
@@ -151,27 +152,39 @@ def main():
 
     # Determine PDF list and optional explicit type override
     explicit_type = None
+    args = sys.argv[1:]
 
-    if len(sys.argv) == 3:
-        # Single file + explicit type: python 01_extract.py s012 412YZ
-        survey_id = sys.argv[1].removesuffix(".pdf")
-        explicit_type = sys.argv[2]
-        if explicit_type not in config.SURVEY_TYPES:
-            print(f"ERROR: Unknown survey type '{explicit_type}'. Valid types: {list(config.SURVEY_TYPES)}")
+    # Check if last arg is a survey type override
+    if args and args[-1] in config.SURVEY_TYPES:
+        explicit_type = args[-1]
+        args = args[:-1]
+
+    def resolve_pdf(sid: str) -> Path:
+        p = config.RAW_DIR / f"{sid.removesuffix('.pdf')}.pdf"
+        if not p.exists():
+            print(f"ERROR: {p} not found.")
             sys.exit(1)
-        pdf_path = config.RAW_DIR / f"{survey_id}.pdf"
-        if not pdf_path.exists():
-            print(f"ERROR: {pdf_path} not found.")
+        return p
+
+    if len(args) == 2:
+        # Range mode: s011 s020 [optional type]
+        all_pdfs = sorted(config.RAW_DIR.glob("*.pdf"))
+        names = [p.stem for p in all_pdfs]
+        start_id = args[0].removesuffix(".pdf")
+        end_id   = args[1].removesuffix(".pdf")
+        for sid in (start_id, end_id):
+            if sid not in names:
+                print(f"ERROR: {sid}.pdf not found in {config.RAW_DIR}")
+                sys.exit(1)
+        start_i = names.index(start_id)
+        end_i   = names.index(end_id)
+        if start_i > end_i:
+            print(f"ERROR: {start_id} comes after {end_id} in sort order.")
             sys.exit(1)
-        pdf_files = [pdf_path]
-    elif len(sys.argv) == 2:
-        # Single file, auto-detect type: python 01_extract.py s001
-        survey_id = sys.argv[1].removesuffix(".pdf")
-        pdf_path  = config.RAW_DIR / f"{survey_id}.pdf"
-        if not pdf_path.exists():
-            print(f"ERROR: {pdf_path} not found.")
-            sys.exit(1)
-        pdf_files = [pdf_path]
+        pdf_files = all_pdfs[start_i : end_i + 1]
+    elif len(args) == 1:
+        # Single file: s001 [optional type]
+        pdf_files = [resolve_pdf(args[0])]
     else:
         # All files mode
         pdf_files = sorted(config.RAW_DIR.glob("*.pdf"))
