@@ -7,6 +7,7 @@ Usage:
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -38,6 +39,7 @@ MUST_REVIEW_THRESHOLD = 0.75  # conf < 0.75 → red
 VALID_VALUES = {
     # IL fields
     "q6b_job_types":           "retail_customer_service, food_service, office_admin, healthcare_childcare_helping, warehouse_construction_handson, technology_creative, other",
+    "q6a_vehicle_access":      "own_reliable, own_unreliable, share_reliable, share_unreliable, borrow, no_access",
     "q7_barriers":             "childcare, criminal_background, no_references, interview_skills, no_diploma, limited_experience, mental_physical_health, transportation, drugs_alcohol, not_getting_called, something_else, does_not_apply",
     "q8_left_job_reasons":     "found_better, quit, fired_attendance, fired_performance, seasonal, other, does_not_apply",
     "q8a_quit_reasons":        "low_pay_hours, schedule_conflict, lack_of_support, poor_conditions, mental_emotional_health, transportation, not_good_fit, personal_family, other",
@@ -50,6 +52,7 @@ VALID_VALUES = {
     "q10_job_barriers":           "childcare, criminal_background, no_references, interview_skills, no_diploma, limited_experience, mental_physical_health, transportation, drugs_alcohol, not_getting_called, something_else",
     "q11_left_job_reasons":       "found_better, quit, fired_attendance, fired_performance, seasonal, pregnancy_parenting, other",
     "q11a_quit_reasons":          "low_pay_hours, schedule_conflict, lack_of_support, poor_conditions, mental_emotional_health, transportation, not_good_fit, personal_family, other",
+    "q13_sleeping_location":      "friends_family, shelter, couch_surfing, car, outside, abandoned_building, other",
     "q14_housing_instability_reasons": "evicted_nonpayment, evicted_other, lost_informal_housing, left_unsafe, other",
     "q15a_visit_reasons":         "computers, safe_place, laundry_shower, food, escape_problems, health_counseling, learn_skills, service_providers, see_coach_staff, socialize, work_on_goals, scheduled_activity, other",
     "q15b_visit_barriers":        "coach_invitation, more_info, better_activities, other",
@@ -59,6 +62,7 @@ VALID_VALUES = {
     "q26a_account_setup":         "self_online, self_inperson, self_with_help, added_by_other, other",
     "q26b_account_usage":         "budgeting, saving, cashing_checks, writing_checks, keep_safe, transferring, direct_deposit, debit_card, online_banking, atm, in_person_banking, paying_bills, none, other",
     # shared
+    "sexual_orientation":      "Asexual, Bisexual, Gay or Lesbian, Heterosexual/Straight, Mostly heterosexual, Pansexual, Queer, Same Gender Loving, I am not sure yet, I don't understand the question, Self-describe: [text]",
     "race_ethnicity":          "Black or of African or Caribbean Descent, East Asian, Hispanic or Latinx, Native American Indigenous peoples of America, Native Hawaiian or Pacific Islander, South Asian or Indian Subcontinent, Southeast Asian, Western Asian or Middle Eastern, Other Asian, White or of European Descent, Multi-Racial",
 }
 
@@ -258,15 +262,15 @@ def build_workbook(survey_id: str, fields: dict, confidence: dict) -> openpyxl.W
 # Main
 # ---------------------------------------------------------------------------
 
-def resolve_json_files() -> list[Path]:
-    """Return list of extracted JSON paths based on CLI arguments."""
+def resolve_json_files(args: list[str]) -> list[Path]:
+    """Return list of extracted JSON paths based on positional args (flags already stripped)."""
     all_jsons = sorted(config.EXTRACTED_DIR.glob("*.json"))
     names = [p.stem for p in all_jsons]
 
-    if len(sys.argv) == 3:
+    if len(args) == 2:
         # Range mode: python review.py s008 s010
-        start_id = sys.argv[1].removesuffix(".json")
-        end_id   = sys.argv[2].removesuffix(".json")
+        start_id = args[0].removesuffix(".json")
+        end_id   = args[1].removesuffix(".json")
         for sid in (start_id, end_id):
             if sid not in names:
                 print(f"ERROR: {sid}.json not found in {config.EXTRACTED_DIR}")
@@ -278,9 +282,9 @@ def resolve_json_files() -> list[Path]:
             sys.exit(1)
         return all_jsons[start_i : end_i + 1]
 
-    elif len(sys.argv) == 2:
+    elif len(args) == 1:
         # Single file mode: python review.py s001
-        survey_id = sys.argv[1].removesuffix(".json")
+        survey_id = args[0].removesuffix(".json")
         json_path = config.EXTRACTED_DIR / f"{survey_id}.json"
         if not json_path.exists():
             print(f"ERROR: {json_path} not found.")
@@ -296,12 +300,12 @@ def resolve_json_files() -> list[Path]:
 
 
 def main():
-    # Strip --force flag before positional argument parsing
+    # Strip flags; keep only survey-ID-like positional args (e.g. s001, s091.json)
     force = "--force" in sys.argv
-    if force:
-        sys.argv.remove("--force")
+    args = [a for a in sys.argv[1:]
+            if not a.startswith("--") and re.match(r"s\d+(?:\.json)?$", a, re.IGNORECASE)]
 
-    json_files = resolve_json_files()
+    json_files = resolve_json_files(args)
 
     print(f"Generating review workbook(s) for {len(json_files)} survey(s)...\n")
 

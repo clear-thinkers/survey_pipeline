@@ -43,7 +43,7 @@ def get_survey_type(pdf_path: Path) -> str:
     raise ValueError(f"Cannot determine survey type from filename: {pdf_path.stem}")
 
 
-def pdf_to_base64_jpegs(pdf_path: Path, dpi: int = 150) -> list[str]:
+def pdf_to_base64_jpegs(pdf_path: Path, dpi: int = 120) -> list[str]:
     """Convert every page of a PDF to a base64-encoded JPEG string."""
     pages = convert_from_path(str(pdf_path), dpi=dpi, poppler_path=str(config.POPPLER_PATH))
     encoded = []

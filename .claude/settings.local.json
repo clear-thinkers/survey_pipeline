@@ -24,7 +24,9 @@
       "Bash(python scripts/review.py s012)",
       "Bash(python -c \"import json; d=json.load\\(open\\(''data/extracted/s012.json''\\)\\); print\\(list\\(d[''fields''].keys\\(\\)\\)\\)\")",
       "Bash(python scripts/review.py s012 --force)",
-      "Bash(venv/Scripts/python.exe scripts/01_extract.py s107)"
+      "Bash(venv/Scripts/python.exe scripts/01_extract.py s107)",
+      "Bash(du -k c:/Users/alexi/coding/survey_ocr/data/raw/*.pdf)",
+      "Bash(python -c ':*)"
     ]
   }
 }

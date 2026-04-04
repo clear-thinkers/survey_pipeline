@@ -38,8 +38,9 @@ def get_survey_type(json_path: Path) -> str:
     raise ValueError(f"Cannot determine survey type from filename: {json_path.stem}")
 
 
-# Fields whose values are lists in the JSON schema
+# Fields whose values are lists in the JSON schema (covers both IL and 412YZ)
 ARRAY_FIELDS = {
+    # IL multi-select fields
     "q6b_job_types",
     "q7_barriers",
     "q8_left_job_reasons",
@@ -47,6 +48,20 @@ ARRAY_FIELDS = {
     "q9_bank_account",
     "q9a_no_account_reasons",
     "q11_program_helped",
+    # 412YZ multi-select fields
+    "q7a_not_registered_reasons",
+    "q10_job_barriers",
+    "q11_left_job_reasons",
+    "q11a_quit_reasons",
+    "q14_housing_instability_reasons",
+    "q15a_visit_reasons",
+    "q15b_visit_barriers",
+    "q17_program_helped",
+    "q24_money_methods",
+    "q25_bank_account",
+    "q26a_account_setup",
+    "q26b_account_usage",
+    # shared
     "race_ethnicity",
 }
 
