@@ -18,7 +18,7 @@ CONFIDENCE_THRESHOLD = 0.9
 DATA_DIR = Path(__file__).parent / "data"
 RAW_DIR = DATA_DIR / "raw"
 EXTRACTED_DIR = DATA_DIR / "extracted"
-POPPLER_PATH = r"C:\Users\alexi\AppData\Local\Programs\Poppler\poppler-24.08.0\Library\bin"
+POPPLER_PATH = r"C:\Users\alexi\AppData\Local\Microsoft\WinGet\Packages\oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe\poppler-25.07.0\Library\bin"
 
 SURVEY_TYPES = {
     "IL": {
