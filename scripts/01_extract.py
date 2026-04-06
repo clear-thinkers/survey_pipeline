@@ -160,18 +160,20 @@ def main():
         args = args[:-1]
 
     def resolve_pdf(sid: str) -> Path:
-        p = config.RAW_DIR / f"{sid.removesuffix('.pdf')}.pdf"
-        if not p.exists():
-            print(f"ERROR: {p} not found.")
-            sys.exit(1)
-        return p
+        sid_clean = sid.removesuffix('.pdf').removesuffix('.PDF')
+        # Try exact name first, then case-insensitive match
+        for candidate in config.RAW_DIR.glob("*.pdf"):
+            if candidate.stem.lower() == sid_clean.lower():
+                return candidate
+        print(f"ERROR: {sid_clean}.pdf not found in {config.RAW_DIR}")
+        sys.exit(1)
 
     if len(args) == 2:
         # Range mode: s011 s020 [optional type]
-        all_pdfs = sorted(config.RAW_DIR.glob("*.pdf"))
-        names = [p.stem for p in all_pdfs]
-        start_id = args[0].removesuffix(".pdf")
-        end_id   = args[1].removesuffix(".pdf")
+        all_pdfs = sorted(config.RAW_DIR.glob("*.pdf"), key=lambda p: p.stem.lower())
+        names = [p.stem.lower() for p in all_pdfs]
+        start_id = args[0].removesuffix(".pdf").removesuffix(".PDF").lower()
+        end_id   = args[1].removesuffix(".pdf").removesuffix(".PDF").lower()
         for sid in (start_id, end_id):
             if sid not in names:
                 print(f"ERROR: {sid}.pdf not found in {config.RAW_DIR}")
