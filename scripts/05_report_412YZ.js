@@ -89,8 +89,8 @@ const CHARTS_DIR = path.join(BASE_DIR, "output", "412YZ", "charts");
 /**
  * embedChart(chartFilename, widthInches = 6)
  * Reads the PNG from output/412YZ/charts/, returns a centered Paragraph
- * containing an ImageRun. Width in EMUs = widthInches * 914400; height is
- * computed proportionally using sharp.
+ * containing an ImageRun. docx v9 transformation.width/height are in screen
+ * pixels (96 DPI). Height is computed proportionally using sharp.
  */
 async function embedChart(chartFilename, widthInches = 6) {
   const chartPath = path.join(CHARTS_DIR, chartFilename);
@@ -100,14 +100,15 @@ async function embedChart(chartFilename, widthInches = 6) {
   }
   const data = fs.readFileSync(chartPath);
 
-  let widthEmu  = Math.round(widthInches * 914400);
-  let heightEmu = Math.round(widthEmu * 0.5625); // fallback 16:9
+  // docx v9 multiplies by 9525 (EMU/px at 96 DPI) internally, so pass pixels
+  let widthPx  = Math.round(widthInches * 96);
+  let heightPx = Math.round(widthPx * 0.5625); // fallback 16:9
 
   if (sharp) {
     try {
       const meta  = await sharp(chartPath).metadata();
       const ratio = meta.height / meta.width;
-      heightEmu   = Math.round(widthEmu * ratio);
+      heightPx    = Math.round(widthPx * ratio);
     } catch (e) {
       console.warn(`  [warn] sharp metadata failed for ${chartFilename}: ${e.message}`);
     }
@@ -120,7 +121,7 @@ async function embedChart(chartFilename, widthInches = 6) {
       new ImageRun({
         data,
         type: "png",
-        transformation: { width: widthEmu, height: heightEmu },
+        transformation: { width: widthPx, height: heightPx },
       }),
     ],
   });
