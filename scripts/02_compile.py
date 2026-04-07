@@ -57,6 +57,7 @@ ARRAY_FIELDS = {
     "q15a_visit_reasons",
     "q15b_visit_barriers",
     "q17_program_helped",
+    "q13_sleeping_location",
     "q24_money_methods",
     "q25_bank_account",
     "q26a_account_setup",
@@ -91,6 +92,18 @@ def parse_correction(raw: str, field: str):
                 pass
         # Comma-separated plain text fallback
         return [item.strip() for item in value.split(",") if item.strip()]
+
+    # For non-array fields: treat "[]" as a blank/null correction
+    if value == "[]":
+        return ""
+
+    # If reviewer accidentally entered multiple comma-separated values for a
+    # single-select field, take only the first one and warn.
+    if "," in value:
+        first = value.split(",")[0].strip()
+        print(f"  [WARN] {field}: multi-value correction '{value}' for single-select "
+              f"field -- using first value '{first}'")
+        return first
 
     return value
 
