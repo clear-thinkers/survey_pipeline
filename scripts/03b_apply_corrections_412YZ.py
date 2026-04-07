@@ -112,6 +112,10 @@ def apply_all(df: pd.DataFrame, corrections: list[dict]) -> tuple[pd.DataFrame, 
         survey_mask = df["survey_id"] == survey_id
         if apply_to == "all_surveys":
             mask = pd.Series(True, index=df.index)
+            # For coach_name_corrected, never overwrite rows that already have
+            # a suggested name — only fill in the blanks.
+            if field == "coach_name_corrected":
+                mask = mask & (df["coach_name_corrected"].isna() | (df["coach_name_corrected"] == ""))
         else:
             mask = survey_mask
 

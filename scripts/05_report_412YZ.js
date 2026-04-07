@@ -9,6 +9,9 @@
 
 const path = require("path");
 const fs   = require("fs");
+// ---------------------------------------------------------------------------
+// NOTE: This file is a complete replacement — all sections are implemented.
+// ---------------------------------------------------------------------------
 
 // Global node_modules fallback for when script is run without a local package.json
 const GLOBAL_NM = "C:\\Users\\alexi\\AppData\\Roaming\\npm\\node_modules";
@@ -39,9 +42,11 @@ const {
   Footer,
   convertInchesToTwip,
   UnderlineType,
+  TableLayoutType,
 } = requireGlobal("docx");
 
 const XLSX = requireGlobal("xlsx");
+const { parse: parseCsv } = requireGlobal("csv-parse/sync");
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -49,6 +54,7 @@ const XLSX = requireGlobal("xlsx");
 
 const BASE_DIR      = path.join(__dirname, "..");
 const ANALYSIS_PATH = path.join(BASE_DIR, "output", "412YZ", "analysis_412YZ.xlsx");
+const CSV_PATH      = path.join(BASE_DIR, "output", "412YZ", "survey_data_412YZ.csv");
 const OUT_PATH      = path.join(BASE_DIR, "report", "412YZ", "report_412YZ_v2.docx");
 
 const SURVEY_MONTH  = "March 2026";
@@ -65,6 +71,9 @@ const Q1_BENCHMARKS = {
   "Is available to me when I need them": ["85%", "88%", "88%", "91%", "88%"],
   "Makes me feel heard and understood":  ["92%", "90%", "92%", "91%", "89%"],
 };
+
+// Loaded in main() from table_widths_412YZ.json
+let TABLE_WIDTHS = {};
 
 // ---------------------------------------------------------------------------
 // Numbering config for bullet lists
@@ -174,25 +183,25 @@ const NO_BORDER = {
  * Total rows: first cell value === totalLabel → header fill + bold.
  * Width: 9360 DXA total, columns evenly distributed.
  */
-function makeTable(rows, totalLabel = "Total") {
+function makeTable(rows, totalLabel = "Total", captionText = "") {
   if (!rows || rows.length === 0) return new Paragraph({ text: "" });
 
-  const cols    = Object.keys(rows[0]).filter((k) => k !== "_header");
-  const colW    = Math.floor(9360 / cols.length);
-  const colWidths = cols.map((_, i) =>
-    i < cols.length - 1 ? colW : 9360 - colW * (cols.length - 1)
-  );
+  const cols        = Object.keys(rows[0]).filter((k) => k !== "_header");
+  const fixedWidths = captionText ? TABLE_WIDTHS[captionText] : null;
 
-  const tableRows = rows.map((rowObj, rowIdx) => {
+  const tableRows = rows.map((rowObj) => {
     const isHeader = rowObj._header === true;
     const firstVal = String(rowObj[cols[0]] ?? "").trim();
     const isTotal  = !isHeader && firstVal === totalLabel;
     const shaded   = isHeader || isTotal;
 
     const cells = cols.map((col, colIdx) => {
-      const cellText = String(rowObj[col] ?? "");
+      const cellText  = String(rowObj[col] ?? "");
+      const cellWidth = fixedWidths
+        ? { size: fixedWidths[colIdx] ?? 0, type: WidthType.DXA }
+        : { size: 0, type: WidthType.AUTO };
       return new TableCell({
-        width: { size: colWidths[colIdx], type: WidthType.DXA },
+        width: cellWidth,
         margins: { top: 80, bottom: 80, left: 120, right: 120 },
         borders: NO_BORDER,
         shading: shaded
@@ -216,8 +225,13 @@ function makeTable(rows, totalLabel = "Total") {
     return new TableRow({ children: cells });
   });
 
+  const tblWidth = fixedWidths
+    ? { size: fixedWidths.reduce((a, b) => a + b, 0), type: WidthType.DXA }
+    : { size: 0, type: WidthType.AUTO };
+
   return new Table({
-    width: { size: 9360, type: WidthType.DXA },
+    width: tblWidth,
+    layout: fixedWidths ? TableLayoutType.FIXED : TableLayoutType.AUTOFIT,
     borders: {
       top:     { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
       bottom:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
@@ -336,18 +350,15 @@ function loadSheet(sheetName) {
 
 function sec_age() {
   const rows = loadSheet("01_age");
-  // Rename columns to match Python: Age, Count
   const renamed = rows.map((r) => {
-    if (r._header) {
-      return { _header: true, Age: "Age", Count: "Count" };
-    }
+    if (r._header) return { _header: true, Age: "Age", Count: "Count" };
     const entries = Object.entries(r);
     return { Age: entries[0]?.[1] ?? "", Count: entries[1]?.[1] ?? "" };
   });
-
+  const cap = "Survey Respondents by Age";
   return [
-    makeCaption("Survey Respondents by Age"),
-    makeTable(renamed),
+    makeCaption(cap),
+    makeTable(renamed, "Total", cap),
     makePara(""),
   ];
 }

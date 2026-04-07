@@ -1,0 +1,4 @@
+{
+  "_instructions": "Column widths in DXA (1440 = 1 inch). Key is the table caption text. If a caption is not listed here, table uses AUTO width. Widths must sum to total table width. Leave empty {} to use all AUTO.",
+  "Survey Respondents by Age": [3000, 1500]
+}
