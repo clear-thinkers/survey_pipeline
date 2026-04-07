@@ -15,7 +15,7 @@ Pre-analysis standardization for output/412YZ/survey_data_412YZ.csv.
    - Intended for manual reviewer confirmation / correction before analysis
 
 Usage:
-    python scripts/standardize_fields.py
+    python scripts/03c_standardize_fields_412YZ.py
 """
 
 import re

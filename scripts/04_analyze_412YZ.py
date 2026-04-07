@@ -1,10 +1,10 @@
 """
-04_analyze.py
+04_analyze_412YZ.py
 Compute descriptive statistics for output/412YZ/survey_data_412YZ.csv and write
 output/412YZ/analysis_412YZ.xlsx with one sheet per reporting component (22 sheets).
 
 Usage:
-    python scripts/04_analyze.py
+    python scripts/04_analyze_412YZ.py
 """
 
 import sys

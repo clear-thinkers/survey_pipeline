@@ -1,5 +1,5 @@
 """
-03_qa.py
+03_qa_412YZ.py
 Run QA validation on output/412YZ/survey_data_412YZ.csv.
 
 Produces two outputs:
@@ -8,10 +8,10 @@ Produces two outputs:
                                            colour-coded by category, with blank
                                            Action / Corrected Value / Apply To columns
                                            for the reviewer to fill in before running
-                                           apply_corrections.py.
+                                           03b_apply_corrections_412YZ.py.
 
 Usage:
-    python scripts/03_qa.py
+    python scripts/03_qa_412YZ.py
 """
 
 import sys
@@ -512,7 +512,7 @@ INSTRUCTIONS = (
     "  action        → clear | recode | accept | exclude\n"
     "  corrected_value → new value if action=recode (leave blank otherwise)\n"
     "  apply_to      → this_survey | all_surveys\n"
-    "When done, save and run:  python scripts/apply_corrections.py"
+    "When done, save and run:  python scripts/03b_apply_corrections_412YZ.py"
 )
 
 

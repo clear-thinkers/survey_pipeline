@@ -20,7 +20,7 @@ act on; other tokens in the same cell are left untouched.
 Overwrites survey_data_412YZ.csv in place and prints a change log.
 
 Usage:
-    python scripts/apply_corrections.py
+    python scripts/03b_apply_corrections_412YZ.py
 """
 
 import sys
