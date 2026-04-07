@@ -1098,6 +1098,320 @@ SECTIONS = [
 ]
 
 
+def generate_charts():
+    """Generate 6 chart PNGs from analysis_412YZ.xlsx into output/412YZ/charts/."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import matplotlib.ticker as mticker
+    import numpy as np
+
+    CHARTS_DIR = OUT_PATH.parent / "charts"
+    CHARTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    PALETTE = ["#4472C4", "#ED7D31", "#A9D18E", "#FF0000", "#FFC000"]
+    GRID_COLOR = "#E0E0E0"
+
+    def _apply_base_style(ax):
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.yaxis.grid(False)
+        ax.xaxis.grid(True, color=GRID_COLOR, zorder=0)
+        ax.set_axisbelow(True)
+
+    def _apply_hbar_style(ax):
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.xaxis.grid(True, color=GRID_COLOR, zorder=0)
+        ax.yaxis.grid(False)
+        ax.set_axisbelow(True)
+
+    def _save(fig, name):
+        fig.tight_layout()
+        out = CHARTS_DIR / name
+        fig.savefig(str(out), dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return out
+
+    def _load_sheet(sheet_name):
+        """Load a sheet from analysis_412YZ.xlsx, skip title row (row 0), use row 1 as header."""
+        import openpyxl as _opxl
+        wb = _opxl.load_workbook(str(OUT_PATH), read_only=True, data_only=True)
+        ws = wb[sheet_name]
+        rows = list(ws.iter_rows(values_only=True))
+        wb.close()
+        # row 0 = section title, row 1 = column headers, row 2+ = data
+        if len(rows) < 2:
+            return []
+        headers = [str(h) if h is not None else "" for h in rows[1]]
+        result = []
+        for r in rows[2:]:
+            if any(v not in (None, "") for v in r):
+                obj = {headers[i]: (r[i] if r[i] is not None else "") for i in range(len(headers))}
+                result.append(obj)
+        return result
+
+    # ------------------------------------------------------------------
+    # Chart 1: Coach Satisfaction (horizontal bar, top-2 box %)
+    # ------------------------------------------------------------------
+    rows05 = _load_sheet("05_q1")
+    labels1, vals1 = [], []
+    for r in rows05:
+        raw_label = list(r.values())[0]
+        raw_pct   = list(r.values())[2] if len(r) > 2 else ""
+        if not raw_pct:
+            continue
+        label = str(raw_label).strip()
+        label = (label[:35] + "…") if len(label) > 35 else label
+        pct_val = float(str(raw_pct).replace("%", "").strip()) if str(raw_pct).replace("%", "").strip() else 0
+        labels1.append(label)
+        vals1.append(pct_val)
+
+    if labels1:
+        fig, ax = plt.subplots(figsize=(8, 3.5))
+        y_pos = range(len(labels1))
+        bars = ax.barh(list(y_pos), vals1, color=PALETTE[0], zorder=3)
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(labels1, fontsize=10)
+        ax.set_xlim(0, 100)
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        _apply_hbar_style(ax)
+        for bar, val in zip(bars, vals1):
+            ax.text(val + 1, bar.get_y() + bar.get_height() / 2,
+                    f"{int(val)}%", va="center", ha="left", fontsize=10)
+        _save(fig, "chart_01_coach_satisfaction.png")
+
+    # ------------------------------------------------------------------
+    # Chart 2: Housing Stability — 100% stacked horizontal bar by age
+    # ------------------------------------------------------------------
+    rows07 = _load_sheet("07_housing")
+
+    # Build age × status cross-tab from the CSV directly
+    csv_df = pd.read_csv(str(CSV_PATH), encoding="utf-8-sig", dtype=str).fillna("")
+    csv_df["_age"] = csv_df["age_range"].apply(age_label)
+
+    HOUSING_CHART_LABELS = {
+        "stable":          "Safe and stable",
+        "safe_not_90days": "Safe <90 days",
+        "90days_not_safe": "Can stay, not safe",
+        "no_place":        "No place to stay",
+    }
+    HOUSING_CHART_ORDER = ["stable", "safe_not_90days", "90days_not_safe", "no_place"]
+    age_groups_h = ["16-17 years old", "18-20 years old", "21-23 years old", "Unknown"]
+    age_display_h = ["16-17", "18-20", "21-23", "Unknown"]
+
+    h_data = {}
+    for age in age_groups_h:
+        sub = csv_df[csv_df["_age"] == age]
+        counts = {code: int((sub["q12_housing_stability"] == code).sum()) for code in HOUSING_CHART_ORDER}
+        h_data[age] = counts
+
+    # Only keep age groups that have at least 1 respondent
+    age_groups_h2 = [a for a in age_groups_h if sum(h_data[a].values()) > 0]
+    age_display_h2 = [age_display_h[age_groups_h.index(a)] for a in age_groups_h2]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    lefts = np.zeros(len(age_groups_h2))
+    for ci, code in enumerate(HOUSING_CHART_ORDER):
+        seg_counts = np.array([h_data[a][code] for a in age_groups_h2], dtype=float)
+        row_totals = np.array([sum(h_data[a].values()) for a in age_groups_h2], dtype=float)
+        seg_pcts   = np.where(row_totals > 0, 100 * seg_counts / row_totals, 0)
+        bars = ax.barh(range(len(age_groups_h2)), seg_pcts, left=lefts,
+                       color=PALETTE[ci % len(PALETTE)], label=HOUSING_CHART_LABELS[code], zorder=3)
+        for i, (bar, pval) in enumerate(zip(bars, seg_pcts)):
+            if pval >= 8:
+                ax.text(lefts[i] + pval / 2, bar.get_y() + bar.get_height() / 2,
+                        f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color="white")
+        lefts += seg_pcts
+    ax.set_yticks(range(len(age_groups_h2)))
+    ax.set_yticklabels(age_display_h2, fontsize=10)
+    ax.set_xlim(0, 100)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+    _apply_hbar_style(ax)
+    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
+    _save(fig, "chart_02_housing_stability.png")
+
+    # ------------------------------------------------------------------
+    # Chart 3: Employment by Age — 100% stacked horizontal bar
+    # ------------------------------------------------------------------
+    EMP_CHART_MAP = {
+        "yes_full_time":        "Full time",
+        "yes_part_time":        "Part time",
+        "job_training_program": "Job training",
+        "no":                   "Not working",
+    }
+    EMP_CHART_ORDER = ["yes_full_time", "yes_part_time", "job_training_program", "no"]
+
+    age_groups_e = ["16-17 years old", "18-20 years old", "21-23 years old", "Unknown"]
+    age_display_e = ["16-17", "18-20", "21-23", "Unknown"]
+
+    e_data = {}
+    for age in age_groups_e:
+        sub = csv_df[(csv_df["_age"] == age) & (csv_df["q8_employment_status"] != "")]
+        counts = {code: int((sub["q8_employment_status"] == code).sum()) for code in EMP_CHART_ORDER}
+        e_data[age] = counts
+
+    age_groups_e2  = [a for a in age_groups_e if sum(e_data[a].values()) > 0]
+    age_display_e2 = [age_display_e[age_groups_e.index(a)] for a in age_groups_e2]
+
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    lefts = np.zeros(len(age_groups_e2))
+    for ci, code in enumerate(EMP_CHART_ORDER):
+        seg_counts = np.array([e_data[a][code] for a in age_groups_e2], dtype=float)
+        row_totals = np.array([sum(e_data[a].values()) for a in age_groups_e2], dtype=float)
+        seg_pcts   = np.where(row_totals > 0, 100 * seg_counts / row_totals, 0)
+        bars = ax.barh(range(len(age_groups_e2)), seg_pcts, left=lefts,
+                       color=PALETTE[ci % len(PALETTE)], label=EMP_CHART_MAP[code], zorder=3)
+        for i, (bar, pval) in enumerate(zip(bars, seg_pcts)):
+            if pval >= 8:
+                ax.text(lefts[i] + pval / 2, bar.get_y() + bar.get_height() / 2,
+                        f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color="white")
+        lefts += seg_pcts
+    ax.set_yticks(range(len(age_groups_e2)))
+    ax.set_yticklabels(age_display_e2, fontsize=10)
+    ax.set_xlim(0, 100)
+    ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+    _apply_hbar_style(ax)
+    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
+    _save(fig, "chart_03_employment_by_age.png")
+
+    # ------------------------------------------------------------------
+    # Chart 4: Visit Frequency by Age — grouped vertical bar
+    # ------------------------------------------------------------------
+    rows16 = _load_sheet("16_visit")
+    VISIT_FREQ_LABELS = {
+        "Every week":               "Every week",
+        "1-3 times per month":      "1-3x/month",
+        "Less than once per month": "<1x/month",
+        "Never":                    "Never",
+    }
+    VISIT_AGE_COLS  = ["16-17 years old", "18-20 years old", "21-23 years old"]
+    VISIT_DISP_COLS = ["16-17", "18-20", "21-23"]
+
+    freq_rows = [r for r in rows16 if str(list(r.values())[0]).strip() not in ("", "Total", "Visit Frequency")]
+    freq_labels_chart = []
+    freq_matrix = {d: [] for d in VISIT_DISP_COLS}
+
+    for r in freq_rows:
+        first_val = str(list(r.values())[0]).strip()
+        if first_val in ("", "Total"):
+            continue
+        freq_labels_chart.append(VISIT_FREQ_LABELS.get(first_val, first_val))
+        keys = list(r.keys())
+        for ki, age_col in enumerate(VISIT_AGE_COLS):
+            val = 0
+            if age_col in r:
+                try:
+                    val = int(r[age_col])
+                except (ValueError, TypeError):
+                    val = 0
+            freq_matrix[VISIT_DISP_COLS[ki]].append(val)
+
+    if freq_labels_chart:
+        n_groups  = len(freq_labels_chart)
+        n_bars    = len(VISIT_DISP_COLS)
+        width     = 0.25
+        x         = np.arange(n_groups)
+
+        fig, ax = plt.subplots(figsize=(8, 4.5))
+        for bi, (disp, col) in enumerate(zip(VISIT_DISP_COLS, PALETTE[:n_bars])):
+            offsets = x + (bi - (n_bars - 1) / 2) * width
+            ax.bar(offsets, freq_matrix[disp], width=width, color=col, label=disp, zorder=3)
+        ax.set_xticks(x)
+        ax.set_xticklabels(freq_labels_chart, fontsize=10)
+        ax.set_ylabel("Number of Youth", fontsize=10)
+        _apply_base_style(ax)
+        ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
+        _save(fig, "chart_04_visit_frequency.png")
+
+    # ------------------------------------------------------------------
+    # Chart 5: NPS — single 100% stacked horizontal bar
+    # ------------------------------------------------------------------
+    rows21 = _load_sheet("21_nps")
+    nps_counts = {}
+    nps_score_val = None
+    for r in rows21:
+        cat = str(list(r.values())[0]).strip()
+        cnt_raw = list(r.values())[1] if len(r) > 1 else ""
+        try:
+            cnt = int(float(str(cnt_raw)))
+        except (ValueError, TypeError):
+            cnt = 0
+        if "Promoter" in cat:
+            nps_counts["promoter"] = cnt
+        elif "Passive" in cat:
+            nps_counts["passive"] = cnt
+        elif "Detractor" in cat:
+            nps_counts["detractor"] = cnt
+        elif "NPS Score" in cat:
+            nps_score_val = cnt_raw
+
+    total_nps = sum(nps_counts.get(k, 0) for k in ("promoter", "passive", "detractor"))
+    if total_nps > 0:
+        det_pct  = 100 * nps_counts.get("detractor", 0) / total_nps
+        pas_pct  = 100 * nps_counts.get("passive",   0) / total_nps
+        pro_pct  = 100 * nps_counts.get("promoter",  0) / total_nps
+
+        fig, ax = plt.subplots(figsize=(8, 2))
+        # Order: Detractor | Passive | Promoter (left to right)
+        seg_labels = ["Detractors", "Passives",  "Promoters"]
+        seg_pcts   = [det_pct,       pas_pct,     pro_pct]
+        seg_colors = ["#FF0000",     "#FFC000",   "#4472C4"]
+        left = 0
+        for lbl, pval, col in zip(seg_labels, seg_pcts, seg_colors):
+            ax.barh([0], [pval], left=left, color=col, height=0.6, zorder=3)
+            if pval >= 5:
+                ax.text(left + pval / 2, 0, f"{int(round(pval))}%",
+                        va="center", ha="center", fontsize=10, color="white", fontweight="bold")
+            left += pval
+        ax.set_xlim(0, 100)
+        ax.set_ylim(-0.8, 0.8)
+        ax.axis("off")
+        nps_label = f"NPS = {nps_score_val}" if nps_score_val is not None else "NPS"
+        ax.text(50, -0.55, nps_label, va="center", ha="center", fontsize=11, fontweight="bold")
+        _save(fig, "chart_05_nps.png")
+
+    # ------------------------------------------------------------------
+    # Chart 6: Race Distribution — horizontal bar by count
+    # ------------------------------------------------------------------
+    rows03 = _load_sheet("03_race_once")
+    race_labels, race_counts = [], []
+    for r in rows03:
+        label = str(list(r.values())[0]).strip()
+        if label in ("", "Race/Ethnicity", "Total"):
+            continue
+        total_val = r.get("Total", "")
+        try:
+            cnt = int(float(str(total_val)))
+        except (ValueError, TypeError):
+            continue
+        race_labels.append(label)
+        race_counts.append(cnt)
+
+    if race_labels:
+        paired = sorted(zip(race_counts, race_labels), reverse=True)
+        race_counts_s, race_labels_s = zip(*paired)
+
+        fig, ax = plt.subplots(figsize=(8, 3))
+        y_pos = range(len(race_labels_s))
+        bars = ax.barh(list(y_pos), list(race_counts_s), color=PALETTE[0], zorder=3)
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(race_labels_s, fontsize=10)
+        _apply_hbar_style(ax)
+        for bar, cnt in zip(bars, race_counts_s):
+            ax.text(cnt + 0.3, bar.get_y() + bar.get_height() / 2,
+                    str(cnt), va="center", ha="left", fontsize=10)
+        _save(fig, "chart_06_race_distribution.png")
+
+    # ------------------------------------------------------------------
+    # Summary
+    # ------------------------------------------------------------------
+    print(f"\nCharts written to {CHARTS_DIR}:")
+    for png in sorted(CHARTS_DIR.glob("chart_0*.png")):
+        size_kb = png.stat().st_size / 1024
+        print(f"  {png.name}  ({size_kb:.1f} KB)")
+
+
 def main():
     if not CSV_PATH.exists():
         print(f"CSV not found: {CSV_PATH}")
@@ -1122,6 +1436,8 @@ def main():
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     wb.save(str(OUT_PATH))
     print(f"\nSaved: {OUT_PATH}")
+
+    generate_charts()
 
 
 if __name__ == "__main__":

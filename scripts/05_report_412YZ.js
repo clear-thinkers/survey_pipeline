@@ -48,6 +48,11 @@ const {
 const XLSX = requireGlobal("xlsx");
 const { parse: parseCsv } = require(path.join(GLOBAL_NM, "csv-parse", "dist", "cjs", "sync.cjs"));
 
+// sharp — local install preferred, global fallback
+let sharp;
+try { sharp = require(path.join(__dirname, "..", "node_modules", "sharp")); }
+catch (_) { try { sharp = requireGlobal("sharp"); } catch (__) { sharp = null; } }
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -74,6 +79,53 @@ const Q1_BENCHMARKS = {
 
 // Loaded in main() from table_widths_412YZ.json
 let TABLE_WIDTHS = {};
+
+// ---------------------------------------------------------------------------
+// Chart helper
+// ---------------------------------------------------------------------------
+
+const CHARTS_DIR = path.join(BASE_DIR, "output", "412YZ", "charts");
+
+/**
+ * embedChart(chartFilename, widthInches = 6)
+ * Reads the PNG from output/412YZ/charts/, returns a centered Paragraph
+ * containing an ImageRun. Width in EMUs = widthInches * 914400; height is
+ * computed proportionally using sharp.
+ */
+async function embedChart(chartFilename, widthInches = 6) {
+  const chartPath = path.join(CHARTS_DIR, chartFilename);
+  if (!fs.existsSync(chartPath)) {
+    console.warn(`  [warn] Chart not found: ${chartPath}`);
+    return new Paragraph({ text: "" });
+  }
+  const data = fs.readFileSync(chartPath);
+
+  let widthEmu  = Math.round(widthInches * 914400);
+  let heightEmu = Math.round(widthEmu * 0.5625); // fallback 16:9
+
+  if (sharp) {
+    try {
+      const meta  = await sharp(chartPath).metadata();
+      const ratio = meta.height / meta.width;
+      heightEmu   = Math.round(widthEmu * ratio);
+    } catch (e) {
+      console.warn(`  [warn] sharp metadata failed for ${chartFilename}: ${e.message}`);
+    }
+  }
+
+  return new Paragraph({
+    alignment: AlignmentType.CENTER,
+    spacing: { after: 120 },
+    children: [
+      new ImageRun({
+        data,
+        type: "png",
+        transformation: { width: widthEmu, height: heightEmu },
+      }),
+    ],
+  });
+}
+
 
 // ---------------------------------------------------------------------------
 // Numbering config for bullet lists
@@ -505,7 +557,7 @@ function sec_gender_orient() {
   ];
 }
 
-function sec_race() {
+async function sec_race() {
   const rowsOnce = loadSheet("03_race_once");
   const data = rowsOnce.filter((r) => !r._header);
   const findPct = (label) => {
@@ -530,6 +582,7 @@ function sec_race() {
     ),
     makeCaption(cap1),
     makeTable(rowsOnce, "Total", cap1),
+    await embedChart("chart_06_race_distribution.png", 5),
     makeCaption(cap2),
     makeTable(rowsMulti, "Total", cap2),
     makePara(""),
@@ -588,6 +641,11 @@ function sec_coach_satisfaction() {
   });
 
   const cap = "Satisfaction Ratings for Youth Coaches Over Time";
+  return { pctTrust, pctVals, headerRow, row1, row2, row3, dataRowsQ1, cap };
+}
+
+async function sec_coach_satisfaction_async() {
+  const { pctTrust, pctVals, headerRow, row1, row2, row3, dataRowsQ1, cap } = sec_coach_satisfaction();
   return [
     makeHeading("FINDINGS", 1),
     makePara(""),
@@ -599,6 +657,7 @@ function sec_coach_satisfaction() {
     ),
     makeCaption(cap),
     makeTable([headerRow, row1, row2, row3, ...dataRowsQ1], "__none__", cap),
+    await embedChart("chart_01_coach_satisfaction.png", 5.5),
     makePara(""),
   ];
 }
@@ -625,7 +684,7 @@ function sec_communication() {
   return [makePara(text), makePara("")];
 }
 
-function sec_housing() {
+async function sec_housing() {
   const rows07 = loadSheet("07_housing");
   const data07 = rows07.filter((r) => !r._header);
   const stableRow = data07.find((r) => {
@@ -649,6 +708,7 @@ function sec_housing() {
     ),
     makeCaption(cap1),
     makeTable(rows07, "Total", cap1),
+    await embedChart("chart_02_housing_stability.png", 5.5),
     makePara(
       "Regardless of their current living situation, if youth experienced unstable " +
       "housing in the prior six months, they were asked to identify the reason(s)."
@@ -717,12 +777,13 @@ function sec_job_tenure(dfCsv) {
   ];
 }
 
-function sec_employment_by_age() {
+async function sec_employment_by_age() {
   const rows10 = loadSheet("10_employment");
   const cap = "Employment Status by Age";
   return [
     makeCaption(cap),
     makeTable(rows10, "Total", cap),
+    await embedChart("chart_03_employment_by_age.png", 5.5),
     makePara(""),
   ];
 }
@@ -817,7 +878,7 @@ function sec_voter_reg() {
   ];
 }
 
-function sec_zone_visit() {
+async function sec_zone_visit() {
   const subs      = splitSheet("16_visit");
   const dfFreq    = subs["Visit Frequency by Age"]       || [];
   const dfReasons = subs["Visit Reasons (frequent)"]     || [];
@@ -834,6 +895,7 @@ function sec_zone_visit() {
     ),
     makeCaption(cap1),
     makeTable(dfFreq, "Total", cap1),
+    await embedChart("chart_04_visit_frequency.png", 5.5),
     makePara(
       "As in prior years, most youth report coming to the 412 Youth Zone downtown " +
       "to see their coach and to work toward their goals."
@@ -942,7 +1004,7 @@ function sec_banking(dfCsv) {
   ];
 }
 
-function sec_nps() {
+async function sec_nps() {
   const rows21   = loadSheet("21_nps");
   const data21   = rows21.filter((r) => !r._header);
   const npsRow   = data21.find((r) => firstCol(r) === "NPS Score");
@@ -956,6 +1018,7 @@ function sec_nps() {
       `The Net Promoter Score (NPS) is ${npsScore}. ` +
       `${pctProm} of respondents were Promoters (9\u201310).`
     ),
+    await embedChart("chart_05_nps.png", 5),
     makePara(""),
   ];
 }
@@ -1012,22 +1075,22 @@ async function main() {
     ...sec_title(),
     ...sec_age(),
     ...sec_gender_orient(),
-    ...sec_race(),
-    ...sec_coach_satisfaction(),
+    ...(await sec_race()),
+    ...(await sec_coach_satisfaction_async()),
     ...sec_communication(),
-    ...sec_housing(),
+    ...(await sec_housing()),
     ...sec_education_employment(dfCsv),
     ...sec_job_tenure(dfCsv),
-    ...sec_employment_by_age(),
+    ...(await sec_employment_by_age()),
     ...sec_job_barriers(),
     ...sec_left_job(),
     ...sec_transportation(),
     ...sec_voter_reg(),
-    ...sec_zone_visit(),
+    ...(await sec_zone_visit()),
     ...sec_program_impact(dfCsv),
     ...sec_respect_environment(),
     ...sec_banking(dfCsv),
-    ...sec_nps(),
+    ...(await sec_nps()),
     ...sec_comments(),
   ];
 
