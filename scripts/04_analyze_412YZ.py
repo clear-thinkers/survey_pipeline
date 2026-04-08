@@ -359,22 +359,24 @@ def race_crosstab(df, multi_count=False):
         df2["_race"] = df2["race_ethnicity"].apply(race_once)
         df2 = df2.dropna(subset=["_race"])
         ct = pd.crosstab(df2["_race"], df2["_gender"])
+        n_total = len(df2)
     else:
+        race_df = df2[df2["race_ethnicity"].astype(str).str.strip() != ""].copy()
         rows = []
-        for _, row in df2.iterrows():
+        for _, row in race_df.iterrows():
             for t in split_pipe(row["race_ethnicity"]):
                 rows.append({"_race": token_to_race_group(t), "_gender": row["_gender"]})
         if not rows:
             return pd.DataFrame()
         tmp = pd.DataFrame(rows)
         ct = pd.crosstab(tmp["_race"], tmp["_gender"])
+        n_total = len(race_df)
 
     for g in GENDER_ORDER:
         if g not in ct.columns:
             ct[g] = 0
     ct = ct[GENDER_ORDER].copy()
     ct["Total"] = ct.sum(axis=1)
-    n_total = ct["Total"].sum()
     ct["Percent"] = ct["Total"].apply(lambda n: pct_str(n, n_total))
     ct = ct.reset_index().rename(columns={"_race": "Race/Ethnicity"})
 
@@ -382,7 +384,7 @@ def race_crosstab(df, multi_count=False):
     extra = [r for r in ct["Race/Ethnicity"].values if r not in RACE_GROUP_ORDER]
     ct = ct.set_index("Race/Ethnicity").reindex(present + extra).reset_index()
 
-    total_row = {"Race/Ethnicity": "Total", "Percent": "100%"}
+    total_row = {"Race/Ethnicity": "Total", "Percent": ""}
     for col in GENDER_ORDER + ["Total"]:
         total_row[col] = ct[col].sum()
     return pd.concat([ct, pd.DataFrame([total_row])], ignore_index=True)

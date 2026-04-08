@@ -1,0 +1,2 @@
+- For 412YZ gender/orientation narrative work, treat LGBTQ as only these rows: Asexual, Bisexual, Demisexual, Gay/Lesbian/Same Gender Loving, Mostly heterosexual, Pansexual, and Queer.
+- If category mapping or interpretation is ambiguous, ask the user before finalizing the draft.

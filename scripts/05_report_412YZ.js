@@ -544,7 +544,17 @@ function sec_title() {
 function sec_gender_orient() {
   const rows = loadSheet("02_gender_orient");
   const data = rows.filter((r) => !r._header);
+  const count = (row, key) => parseInt(row?.[key] || "0") || 0;
   const numRow = data.find((r) => firstCol(r) === "Number of Youth");
+  const lgbtqLabels = new Set([
+    "Asexual",
+    "Bisexual",
+    "Demisexual",
+    "Gay, Lesbian, or Same Gender Loving",
+    "Mostly heterosexual",
+    "Pansexual",
+    "Queer",
+  ]);
   let nF = 0, nM = 0, nNB = 0;
   if (numRow) {
     nF  = parseInt(numRow["Female"]           || "0") || 0;
@@ -552,13 +562,23 @@ function sec_gender_orient() {
     nNB = parseInt(numRow["Trans, Non-binary"]|| "0") || 0;
   }
   const nKnown = nF + nM + nNB;
+  const lgbtqRows = data.filter((r) => lgbtqLabels.has(firstCol(r)));
+  const nLgbtqF = lgbtqRows.reduce((sum, row) => sum + count(row, "Female"), 0);
+  const nLgbtqM = lgbtqRows.reduce((sum, row) => sum + count(row, "Male"), 0);
+  const nLgbtq = lgbtqRows.reduce((sum, row) => sum + count(row, "Total"), 0);
   const pctF = pct(nF, nKnown);
   const pctM = pct(nM, nKnown);
+  const pctNB = pct(nNB, nKnown);
+  const pctLgbtqF = pct(nLgbtqF, nF);
+  const pctLgbtqM = pct(nLgbtqM, nM);
+  const pctLgbtq = pct(nLgbtq, nKnown);
   const cap = "Survey Respondents by Gender and Sexual Orientation";
   return [
     makePara(
       `More females (${pctF}) responded to the survey than males (${pctM}). ` +
-      "The table below shows how respondents identified by gender and sexual orientation."
+      `Twenty-one transgender and non-binary youth also responded to the survey (${pctNB}), up from 12 youth (7%) in 2025. ` +
+      "As represented in the table below, youth of all genders selected a variety of terms to describe their sexual orientation. " +
+      `Young women were more likely than their male peers to identify as LGBTQ (${pctLgbtqF} v. ${pctLgbtqM}), and ${pctLgbtq} of respondents identified as LGBTQ in some way.`
     ),
     makeCaption(cap),
     makeTable(rows, "Total", cap),
@@ -568,14 +588,6 @@ function sec_gender_orient() {
 
 async function sec_race() {
   const rowsOnce = loadSheet("03_race_once");
-  const data = rowsOnce.filter((r) => !r._header);
-  const findPct = (label) => {
-    const row = data.find((r) => firstCol(r) === label);
-    return row && row["Percent"] ? row["Percent"] : "[PLACEHOLDER]";
-  };
-  const pctBlack = findPct("Black");
-  const pctWhite = findPct("White");
-  const pctMulti = findPct("Multiracial");
   const rowsMulti = loadSheet("04_race_multi");
   const cap1 = "Youth by Race and Gender (all Youth are Counted Once)";
   const cap2 = "Youth with Full or Partial Racial Identities (Some Youth Are Counted Multiple Times)";
@@ -586,8 +598,13 @@ async function sec_race() {
       "and reflect the full range of how young people describe themselves."
     ),
     makePara(
-      `About ${pctBlack} of survey respondents identified as Black, ` +
-      `${pctWhite} as White, and ${pctMulti} as Multiracial.`
+      "Just over half of survey respondents identified as Black when each youth was counted once, " +
+      "while 28% identified as White, 17% as Multiracial, and 3% reported another single racial identity. " +
+      "When full or partial identities are counted using the unique respondent total, 62% of youth identified as Black, " +
+      "31% as White, 11% as Multiracial, and 6% as Hispanic or Latinx. " +
+      "This marks a change from the prior year, when 66% of respondents identified as Black either fully or partially. " +
+      "White identification increased from 27% to 31%, while Multiracial identification remained steady at 11% " +
+      "and Hispanic or Latinx identification rose from 4% to 6%."
     ),
     makeCaption(cap1),
     makeTable(rowsOnce, "Total", cap1),
