@@ -142,6 +142,12 @@ KNOWN_RACE_LABELS = {
     "Hispanic or Latinx",
     "East Asian", "Asian",
     "Native American", "Native Hawaiian", "Native American or Native Hawaiian",
+    "Native American or Indigenous peoples of America",
+    "Native Hawaiian or Pacific Islander",
+    "South Asian or Indian (Subcontinent)",
+    "Southeast Asian",
+    "Western Asian or Middle Eastern",
+    "Other Asian",
     "I prefer not to answer", "Prefer not to answer",
 }
 
@@ -149,21 +155,145 @@ KNOWN_GENDER_LABELS = {
     "Female", "Male", "Non-binary",
     "Transgender Male", "Transgender Female",
     "Genderqueer", "Two-Spirit", "Gender Nonconforming",
+    "Trans-Non-binary",
     "I prefer not to say", "Prefer not to answer",
 }
 
+STANDARD_GENDER_VALUES = [
+    "Female",
+    "Male",
+    "Non-binary",
+    "Transgender Male",
+    "Transgender Female",
+    "Genderqueer",
+    "Two-Spirit",
+    "Gender Nonconforming",
+    "Prefer not to answer",
+]
+
 KNOWN_ORIENTATION_LABELS = {
-    "Heterosexual/Straight", "Gay or Lesbian", "Bisexual", "Asexual",
-    "Pansexual", "Queer", "Demisexual", "I am not sure yet",
+    "Heterosexual", "Heterosexual/Straight", "Gay or Lesbian", "Bisexual", "Asexual",
+    "Pansexual", "Queer", "Demisexual", "Mostly heterosexual", "I am not sure yet",
     "I don't understand the question", "I prefer not to answer",
     "Same Gender Loving",
 }
 
-# Near-matches that are almost certainly typos / alternate spellings
-ORIENTATION_TYPOS = {
-    "Straight":    "Heterosexual/Straight",
-    "Demi-Sexual": "Demisexual",
-    "Demi Sexye":  "Demisexual",
+STANDARD_RACE_VALUES = [
+    "Black or of African or Caribbean Descent",
+    "White or of European Descent",
+    "Multi-Racial",
+    "Hispanic or Latinx",
+    "East Asian",
+    "Native American or Indigenous peoples of America",
+    "Native Hawaiian or Pacific Islander",
+    "South Asian or Indian (Subcontinent)",
+    "Southeast Asian",
+    "Western Asian or Middle Eastern",
+    "Other Asian",
+    "Prefer not to answer",
+]
+
+STANDARD_ORIENTATION_VALUES = [
+    "Heterosexual/Straight",
+    "Gay or Lesbian",
+    "Bisexual",
+    "Asexual",
+    "Pansexual",
+    "Queer",
+    "Demisexual",
+    "Mostly heterosexual",
+    "I am not sure yet",
+    "I don't understand the question",
+    "Same Gender Loving",
+    "I prefer not to answer",
+]
+
+# Demographic normalization defaults.
+# Each entry becomes a prefilled QA row so the reviewer only needs to confirm it.
+GENDER_NORMALIZATION = {
+    "Prefer not to say": {
+        "normalized": "Prefer not to answer",
+        "scope": "all_surveys",
+        "detail": "alternate wording for the printed nonresponse option",
+    },
+    "Female | Straight": {
+        "normalized": "Female",
+        "scope": "this_survey",
+        "detail": "gender value includes an orientation label; keeping the gender selection only",
+    },
+}
+
+RACE_NORMALIZATION = {
+    "Black": {
+        "normalized": "Black or of African or Caribbean Descent",
+        "scope": "all_surveys",
+        "detail": "shorthand variant of the printed race label",
+    },
+    "White": {
+        "normalized": "White or of European Descent",
+        "scope": "all_surveys",
+        "detail": "shorthand variant of the printed race label",
+    },
+    "Biracial": {
+        "normalized": "Multi-Racial",
+        "scope": "all_surveys",
+        "detail": "common alternate wording for the printed multiracial label",
+    },
+    "Black African": {
+        "normalized": "Black or of African or Caribbean Descent",
+        "scope": "this_survey",
+        "detail": "self-described race maps directly to the closest printed Black/African label",
+    },
+    "I don't know what to put in white": {
+        "normalized": "White or of European Descent",
+        "scope": "this_survey",
+        "detail": "free-text response explicitly indicates White as the closest printed race label",
+    },
+}
+
+ORIENTATION_NORMALIZATION = {
+    "Straight": {
+        "normalized": "Heterosexual/Straight",
+        "scope": "all_surveys",
+        "detail": "common shorthand for the printed label",
+    },
+    "Heterosexual": {
+        "normalized": "Heterosexual/Straight",
+        "scope": "all_surveys",
+        "detail": "truncated variant of the printed label",
+    },
+    "Demi-Sexual": {
+        "normalized": "Demisexual",
+        "scope": "all_surveys",
+        "detail": "hyphenated spelling variant",
+    },
+    "Demi Sexye": {
+        "normalized": "Demisexual",
+        "scope": "all_surveys",
+        "detail": "likely OCR misspelling of Demisexual",
+    },
+    "Decline to answer": {
+        "normalized": "I prefer not to answer",
+        "scope": "all_surveys",
+        "detail": "alternate wording for the printed nonresponse option",
+    },
+    "I don't know what I am I just say I'm bisexual because I'm still exploring": {
+        "normalized": "Bisexual",
+        "scope": "this_survey",
+        "detail": "respondent explicitly says they identify as bisexual despite exploratory wording",
+    },
+    "Achillean and minsexual": {
+        "normalized": "Queer",
+        "scope": "this_survey",
+        "detail": "non-standard queer-spectrum identity best grouped under the printed umbrella label",
+    },
+}
+
+DEMOGRAPHIC_PLACEHOLDERS = {
+    "self-describe",
+    "self-describe:",
+    "self describe",
+    "self describe:",
 }
 
 LOW_CONF_THRESHOLD = 0.75
@@ -206,6 +336,129 @@ def make_issue(survey_id, field, value, issue_type, detail, question,
         "apply_to":              apply_to,
         "notes":                 "",
     }
+
+
+def make_recode_issue(survey_id, field, value, issue_type, detail, question,
+                      corrected_value, apply_to="this_survey"):
+    return make_issue(
+        survey_id,
+        field,
+        value,
+        issue_type,
+        detail,
+        question,
+        suggestion=corrected_value,
+        action="recode",
+        corrected_value=corrected_value,
+        apply_to=apply_to,
+    )
+
+
+def make_accept_issue(survey_id, field, value, issue_type, detail, question,
+                      suggestion=""):
+    return make_issue(
+        survey_id,
+        field,
+        value,
+        issue_type,
+        detail,
+        question,
+        suggestion=suggestion,
+        action="accept",
+        apply_to="this_survey",
+    )
+
+
+def allowed_demographic_values(field: str) -> str:
+    if field == "gender":
+        return ", ".join(STANDARD_GENDER_VALUES)
+    if field == "race_ethnicity":
+        return ", ".join(STANDARD_RACE_VALUES)
+    if field == "sexual_orientation":
+        return ", ".join(STANDARD_ORIENTATION_VALUES)
+    return ""
+
+
+def make_demographic_recode_issue(survey_id, field, value, mapping):
+    corrected = mapping["normalized"]
+    return make_recode_issue(
+        survey_id,
+        field,
+        value,
+        "F_likely_typo",
+        f"'{value}' is {mapping['detail']}",
+        f"[{survey_id}] {field}='{value}'. Suggested standardization is '{corrected}'. "
+        f"Review the default and change it only if needed.",
+        corrected,
+        apply_to=mapping.get("scope", "this_survey"),
+    )
+
+
+def make_demographic_accept_issue(survey_id, field, value, detail):
+    return make_accept_issue(
+        survey_id,
+        field,
+        value,
+        "F_self_describe" if field != "race_ethnicity" else "F_unrecognized_race_label",
+        detail,
+        f"[{survey_id}] {field}='{value}'. Default action is accept as-is. "
+        f"Review only if you want to override the captured wording for analysis.",
+        suggestion="accept_as_is",
+    )
+
+
+def make_demographic_review_issue(survey_id, field, value, detail):
+    allowed = allowed_demographic_values(field)
+    issue_type = "F_self_describe" if field != "race_ethnicity" else "F_unrecognized_race_label"
+    return make_issue(
+        survey_id,
+        field,
+        value,
+        issue_type,
+        detail,
+        f"[{survey_id}] {field}='{value}'. Reviewer approval required. Choose the best standard value in corrected_value, "
+        f"or explicitly set action=accept only if the wording should be preserved.",
+        suggestion=f"Allowed values: {allowed}",
+        action="",
+        corrected_value="",
+        apply_to="this_survey",
+    )
+
+
+def make_demographic_clear_issue(survey_id, field, value, detail):
+    return make_issue(
+        survey_id,
+        field,
+        value,
+        "F_likely_typo",
+        detail,
+        f"[{survey_id}] {field}='{value}'. Suggested action is clear because this looks like "
+        f"prompt text or OCR noise rather than a respondent answer.",
+        suggestion="clear",
+        action="clear",
+        apply_to="this_survey",
+    )
+
+
+def comma_parts(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def normalize_label_text(value: str) -> str:
+    return value.strip().lower().rstrip(":")
+
+
+def is_demographic_placeholder(value: str) -> bool:
+    return normalize_label_text(value) in DEMOGRAPHIC_PLACEHOLDERS
+
+
+def is_numeric_ocr_noise(value: str) -> bool:
+    return value.strip().isdigit()
+
+
+def all_parts_in_set(value: str, allowed: set[str]) -> bool:
+    parts = split_pipe(value)
+    return bool(parts) and all(part in allowed for part in parts)
 
 
 # ---------------------------------------------------------------------------
@@ -402,43 +655,98 @@ def check_F(row, issues):
 
     # Gender
     gender = str(row.get("gender", "")).strip()
-    if gender and gender not in KNOWN_GENDER_LABELS:
-        issues.append(make_issue(
-            sid, "gender", gender, "F_self_describe",
-            f"'{gender}' is not a standard printed label",
-            f"[{sid}] gender='{gender}'. How should this be grouped for analysis? "
-            f"(Female / Male / Trans-Non-binary / accept-as-is)",
-        ))
+    if gender:
+        if is_demographic_placeholder(gender):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "gender",
+                gender,
+                "placeholder label captured instead of a gender response",
+            ))
+        elif is_numeric_ocr_noise(gender):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "gender",
+                gender,
+                "numeric OCR noise captured in the gender field",
+            ))
+        elif all_parts_in_set(gender, KNOWN_GENDER_LABELS):
+            pass
+        elif gender in GENDER_NORMALIZATION:
+            issues.append(make_demographic_recode_issue(sid, "gender", gender, GENDER_NORMALIZATION[gender]))
+        elif gender not in KNOWN_GENDER_LABELS:
+            issues.append(make_demographic_review_issue(
+                sid,
+                "gender",
+                gender,
+                f"'{gender}' is not a standard printed label",
+            ))
 
     # Sexual orientation
     orientation = str(row.get("sexual_orientation", "")).strip()
     if orientation:
-        if orientation in ORIENTATION_TYPOS:
-            suggestion = ORIENTATION_TYPOS[orientation]
-            issues.append(make_issue(
-                sid, "sexual_orientation", orientation, "F_likely_typo",
-                f"'{orientation}' appears to be a variant of '{suggestion}'",
-                f"[{sid}] sexual_orientation='{orientation}'. "
-                f"Should this be standardized to '{suggestion}'?",
-                suggestion,
+        if is_demographic_placeholder(orientation):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "sexual_orientation",
+                orientation,
+                "placeholder label captured instead of a sexual-orientation response",
+            ))
+        elif is_numeric_ocr_noise(orientation):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "sexual_orientation",
+                orientation,
+                "numeric OCR noise captured in the sexual-orientation field",
+            ))
+        elif orientation in ORIENTATION_NORMALIZATION:
+            issues.append(make_demographic_recode_issue(
+                sid,
+                "sexual_orientation",
+                orientation,
+                ORIENTATION_NORMALIZATION[orientation],
             ))
         elif orientation not in KNOWN_ORIENTATION_LABELS:
-            issues.append(make_issue(
-                sid, "sexual_orientation", orientation, "F_self_describe",
-                f"'{orientation}' is not a standard printed label",
-                f"[{sid}] sexual_orientation='{orientation}'. "
-                f"How should this be categorized for analysis?",
-            ))
+            parts = comma_parts(orientation)
+            if len(parts) > 1 and all(part in KNOWN_ORIENTATION_LABELS for part in parts):
+                issues.append(make_demographic_review_issue(
+                    sid,
+                    "sexual_orientation",
+                    orientation,
+                    "contains multiple recognizable orientation labels and needs reviewer grouping",
+                ))
+            else:
+                issues.append(make_demographic_review_issue(
+                    sid,
+                    "sexual_orientation",
+                    orientation,
+                    f"'{orientation}' is not a standard printed label",
+                ))
 
     # Race / ethnicity tokens
     for tok in split_pipe(row.get("race_ethnicity", "")):
-        if tok not in KNOWN_RACE_LABELS:
-            issues.append(make_issue(
-                sid, "race_ethnicity", tok, "F_unrecognized_race_label",
+        if is_demographic_placeholder(tok):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "race_ethnicity",
+                tok,
+                "placeholder label captured instead of a race response",
+            ))
+        elif is_numeric_ocr_noise(tok):
+            issues.append(make_demographic_clear_issue(
+                sid,
+                "race_ethnicity",
+                tok,
+                "numeric OCR noise captured in the race field",
+            ))
+        elif tok in RACE_NORMALIZATION:
+            issues.append(make_demographic_recode_issue(sid, "race_ethnicity", tok, RACE_NORMALIZATION[tok]))
+        elif tok not in KNOWN_RACE_LABELS:
+            issues.append(make_demographic_review_issue(
+                sid,
+                "race_ethnicity",
+                tok,
                 f"Race token '{tok}' is not a recognized printed label",
-                f"[{sid}] race_ethnicity contains '{tok}'. How should this be categorized? "
-                f"(Black / White / Multi-Racial / Hispanic or Latinx / "
-                f"East Asian / Native American or Native Hawaiian / exclude / accept-as-is)",
             ))
 
 
@@ -508,8 +816,11 @@ COL_WIDTHS = [28, 12, 30, 35, 50, 80, 35, 14, 30, 16, 25]
 
 INSTRUCTIONS = (
     "HOW TO USE THIS WORKBOOK:\n"
-    "For each row, fill in columns H–J:\n"
-    "  action        → clear | recode | accept | exclude\n"
+    "Review the prefilled defaults in columns H–J before changing anything.\n"
+    "  Demographic mapping rows are review-only by default: the action/value/scope is already filled in using the current crosswalk tables.\n"
+    "  Difficult self-described demographic rows stay on QA Questions with no default action; use column G for the allowed standard values before approving a recode or accept decision.\n"
+    "  Only edit the prefilled demographic defaults when a suggested recode or clear decision is wrong for that response.\n"
+    "  action        → clear | recode | accept\n"
     "  corrected_value → new value if action=recode (leave blank otherwise)\n"
     "  apply_to      → this_survey | all_surveys\n"
     "When done, save and run:  python scripts/03b_apply_corrections_412YZ.py"
@@ -558,9 +869,15 @@ def _write_issue_rows(ws, issues, hdr_fill, hdr_font, include_reviewer_cols):
     ws.auto_filter.ref = ws.dimensions
 
 
+def issue_needs_reviewer_input(issue: dict) -> bool:
+    if issue["issue_type"] in ACCEPTED_TYPES:
+        return False
+    return str(issue.get("action", "")).strip().lower() != "accept"
+
+
 def write_reviewer_workbook(issues: list, out_path: Path):
-    active   = [i for i in issues if i["issue_type"] not in ACCEPTED_TYPES]
-    accepted = [i for i in issues if i["issue_type"] in ACCEPTED_TYPES]
+    active   = [i for i in issues if issue_needs_reviewer_input(i)]
+    accepted = [i for i in issues if not issue_needs_reviewer_input(i)]
 
     wb = openpyxl.Workbook()
     hdr_fill = PatternFill("solid", fgColor="1F3864")
@@ -579,19 +896,20 @@ def write_reviewer_workbook(issues: list, out_path: Path):
     _write_issue_rows(ws_active, active, hdr_fill, hdr_font, include_reviewer_cols=True)
 
     n = len(active) + 1
-    dv_action = DataValidation(
-        type="list", formula1='"clear,recode,accept,exclude"',
-        allow_blank=True, showDropDown=False,
-    )
-    dv_action.sqref = f"H2:H{n}"
-    ws_active.add_data_validation(dv_action)
+    if n >= 2:
+        dv_action = DataValidation(
+            type="list", formula1='"clear,recode,accept"',
+            allow_blank=True, showDropDown=False,
+        )
+        ws_active.add_data_validation(dv_action)
+        dv_action.add(f"H2:H{n}")
 
-    dv_scope = DataValidation(
-        type="list", formula1='"this_survey,all_surveys"',
-        allow_blank=True, showDropDown=False,
-    )
-    dv_scope.sqref = f"J2:J{n}"
-    ws_active.add_data_validation(dv_scope)
+        dv_scope = DataValidation(
+            type="list", formula1='"this_survey,all_surveys"',
+            allow_blank=True, showDropDown=False,
+        )
+        ws_active.add_data_validation(dv_scope)
+        dv_scope.add(f"J2:J{n}")
 
     # ── Sheet 3: Accepted — No Action ───────────────────────────────────────
     ws_acc = wb.create_sheet("Accepted - No Action")
@@ -604,10 +922,16 @@ def write_reviewer_workbook(issues: list, out_path: Path):
         cell.fill = hdr_fill
         cell.font = hdr_font
 
-    counts = Counter(i["issue_type"] for i in issues)
+    counts_active = Counter(i["issue_type"] for i in active)
+    counts_accepted = Counter(i["issue_type"] for i in accepted)
     for itype, (label, hex_col) in ISSUE_CATEGORIES.items():
-        n_cat = counts.get(itype, 0)
-        tab = "Accepted - No Action" if itype in ACCEPTED_TYPES else "QA Questions"
+        n_cat = counts_active.get(itype, 0) + counts_accepted.get(itype, 0)
+        if counts_active.get(itype, 0) and counts_accepted.get(itype, 0):
+            tab = "Both"
+        elif counts_active.get(itype, 0):
+            tab = "QA Questions"
+        else:
+            tab = "Accepted - No Action"
         ws_sum.append([label, n_cat, tab])
         row_fill = PatternFill("solid", fgColor=hex_col)
         for cell in ws_sum[ws_sum.max_row]:
@@ -657,25 +981,22 @@ def main():
     write_reviewer_workbook(all_issues, xlsx_path)
 
     # Console summary (ASCII-safe for Windows terminal)
-    active   = [i for i in all_issues if i["issue_type"] not in ACCEPTED_TYPES]
-    accepted = [i for i in all_issues if i["issue_type"] in ACCEPTED_TYPES]
-    counts = Counter(i["issue_type"] for i in all_issues)
+    active   = [i for i in all_issues if issue_needs_reviewer_input(i)]
+    accepted = [i for i in all_issues if not issue_needs_reviewer_input(i)]
+    counts_active = Counter(i["issue_type"] for i in active)
+    counts_accepted = Counter(i["issue_type"] for i in accepted)
     print(f"\n{'='*62}")
     print(f"QA Summary -- {len(df)} surveys, {len(all_issues)} total issues")
     print(f"{'='*62}")
     print(f"  Needs review (QA Questions tab):")
     for itype, (label, _) in ISSUE_CATEGORIES.items():
-        if itype in ACCEPTED_TYPES:
-            continue
-        n = counts.get(itype, 0)
+        n = counts_active.get(itype, 0)
         if n:
             safe_label = label.replace("\u2014", "-").replace("\u2013", "-")
             print(f"    {safe_label:<38} {n:>4}")
     print(f"  Accepted -- no action (separate tab):")
     for itype, (label, _) in ISSUE_CATEGORIES.items():
-        if itype not in ACCEPTED_TYPES:
-            continue
-        n = counts.get(itype, 0)
+        n = counts_accepted.get(itype, 0)
         if n:
             safe_label = label.replace("\u2014", "-").replace("\u2013", "-")
             print(f"    {safe_label:<38} {n:>4}")

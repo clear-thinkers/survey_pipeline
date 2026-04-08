@@ -1,9 +1,9 @@
 """
-review.py
+01b_review.py
 Read a single extracted JSON and produce a human-review Excel workbook.
 
 Usage:
-    python scripts/review.py s001
+    python scripts/01b_review.py s001
 """
 
 import json
@@ -268,7 +268,7 @@ def resolve_json_files(args: list[str]) -> list[Path]:
     names = [p.stem for p in all_jsons]
 
     if len(args) == 2:
-        # Range mode: python review.py s008 s010
+        # Range mode: python 01b_review.py s008 s010
         start_id = args[0].removesuffix(".json")
         end_id   = args[1].removesuffix(".json")
         for sid in (start_id, end_id):
@@ -283,7 +283,7 @@ def resolve_json_files(args: list[str]) -> list[Path]:
         return all_jsons[start_i : end_i + 1]
 
     elif len(args) == 1:
-        # Single file mode: python review.py s001
+        # Single file mode: python 01b_review.py s001
         survey_id = args[0].removesuffix(".json")
         json_path = config.EXTRACTED_DIR / f"{survey_id}.json"
         if not json_path.exists():

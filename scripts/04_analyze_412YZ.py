@@ -402,15 +402,13 @@ def sec01_age(df):
 def sec02_gender_orient(df):
     df2 = df[df["_gender"] != "No answer"].copy()
     df2["_orient"] = df2["sexual_orientation"].apply(
-        lambda x: x.strip() if x.strip() else "No answer provided"
+        lambda x: x.strip() if x.strip() else "Unknown"
     )
     # Merge Gay or Lesbian and Same Gender Loving (matches prior report format)
     df2["_orient"] = df2["_orient"].replace(
         {"Gay or Lesbian": "Gay, Lesbian, or Same Gender Loving",
          "Same Gender Loving": "Gay, Lesbian, or Same Gender Loving"}
     )
-    known = df2["_orient"].unique().tolist()
-    order = ORIENT_ORDER + [o for o in known if o not in ORIENT_ORDER]
 
     ct = pd.crosstab(df2["_orient"], df2["_gender"])
     for g in GENDER_ORDER:
@@ -419,8 +417,11 @@ def sec02_gender_orient(df):
     ct = ct[GENDER_ORDER].copy()
     ct["Total"] = ct.sum(axis=1)
     ct = ct.reset_index().rename(columns={"_orient": "Sexual Orientation"})
-    present = [o for o in order if o in ct["Sexual Orientation"].values]
-    ct = ct.set_index("Sexual Orientation").reindex(present).reset_index()
+    ct["__unknown_last"] = ct["Sexual Orientation"].eq("Unknown")
+    ct = ct.sort_values(
+        by=["__unknown_last", "Total", "Sexual Orientation"],
+        ascending=[True, False, True],
+    ).drop(columns=["__unknown_last"]).reset_index(drop=True)
 
     header = pd.DataFrame([{
         "Sexual Orientation": "Number of Youth",

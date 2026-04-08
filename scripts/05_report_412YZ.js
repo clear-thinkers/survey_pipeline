@@ -85,6 +85,8 @@ let TABLE_WIDTHS = {};
 // ---------------------------------------------------------------------------
 
 const CHARTS_DIR = path.join(BASE_DIR, "output", "412YZ", "charts");
+const BODY_PARAGRAPH_SPACING = { before: 240, after: 240, line: 240 };
+const SPACER_PARAGRAPHS = new WeakSet();
 
 /**
  * embedChart(chartFilename, widthInches = 6)
@@ -180,7 +182,7 @@ const DOC_STYLES = {
         font: "Calibri",
       },
       paragraph: {
-        spacing: { before: 240, after: 120 },
+        spacing: { before: 240, after: 240 },
         outlineLevel: 0,
       },
     },
@@ -197,7 +199,7 @@ const DOC_STYLES = {
         font: "Calibri",
       },
       paragraph: {
-        spacing: { before: 180, after: 60 },
+        spacing: { before: 180, after: 240 },
         outlineLevel: 1,
       },
     },
@@ -212,7 +214,7 @@ const DOC_STYLES = {
         font: "Calibri",
       },
       paragraph: {
-        spacing: { before: 120, after: 60 },
+        spacing: { before: 120, after: 240 },
       },
     },
   ],
@@ -324,10 +326,13 @@ function makeCaption(text) {
  */
 function makePara(text, options = {}) {
   const { bold = false, italic = false, indent = false } = options;
-  return new Paragraph({
+  const para = new Paragraph({
     style: indent ? "ListParagraph" : "Normal",
+    spacing: BODY_PARAGRAPH_SPACING,
     children: [new TextRun({ text, bold, italic, font: "Calibri", size: 22 })],
   });
+  if (!String(text).trim()) SPACER_PARAGRAPHS.add(para);
+  return para;
 }
 
 /**
@@ -336,6 +341,7 @@ function makePara(text, options = {}) {
 function makeBullet(text) {
   return new Paragraph({
     numbering: { reference: "bullets", level: 0 },
+    spacing: BODY_PARAGRAPH_SPACING,
     children: [new TextRun({ text, font: "Calibri", size: 22 })],
   });
 }
@@ -345,6 +351,7 @@ function makeBullet(text) {
  */
 function makePlaceholder(text) {
   return new Paragraph({
+    spacing: BODY_PARAGRAPH_SPACING,
     children: [
       new TextRun({
         text: `[${text}]`,
@@ -521,12 +528,13 @@ function sec_title() {
       "and online."
     ),
     new Paragraph({
+      spacing: BODY_PARAGRAPH_SPACING,
       children: [
         new TextRun({ text: `${N_RESPONDENTS} unique youth (of `, font: "Calibri", size: 22 }),
         new TextRun({ text: "[TOTAL ACTIVE \u2014 fill in denominator]", highlight: "yellow", bold: true, font: "Calibri", size: 22 }),
         new TextRun({ text: " total active) responded to the survey, for a response rate of ", font: "Calibri", size: 22 }),
         new TextRun({ text: "[RESPONSE RATE %]", highlight: "yellow", bold: true, font: "Calibri", size: 22 }),
-        new TextRun({ text: ". Most respondents were age 18\u201320 years old.", font: "Calibri", size: 22 }),
+        new TextRun({ text: ". Most respondents were age 18 or older. About half (49%) of the respondents who reported their age were between 18 and 20 years old, and 40% were 21 to 23 years old. Only 10% were 16 or 17 years old, down from 16% in 2025.", font: "Calibri", size: 22 }),
       ],
     }),
     makePara(""),
@@ -1115,7 +1123,7 @@ async function main() {
     ...sec_banking(dfCsv),
     ...(await sec_nps()),
     ...sec_comments(),
-  ];
+  ].filter((node) => !SPACER_PARAGRAPHS.has(node));
 
   console.log("Assembling document...");
   const doc = new Document({
