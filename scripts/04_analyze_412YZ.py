@@ -1277,35 +1277,26 @@ def generate_charts():
 
     # ------------------------------------------------------------------
     # Chart 4: Visit Frequency by Age — grouped vertical bar
+    # Build directly from csv_df (same logic as sec16_visit) to avoid
+    # multi-sub-table sheet parsing problems.
     # ------------------------------------------------------------------
-    rows16 = _load_sheet("16_visit")
-    VISIT_FREQ_LABELS = {
-        "Every week":               "Every week",
-        "1-3 times per month":      "1-3x/month",
-        "Less than once per month": "<1x/month",
-        "Never":                    "Never",
+    VISIT_FREQ_LABELS_CHART = {
+        "every_week":               "Every week",
+        "1_3_times_per_month":      "1-3x/month",
+        "less_than_once_per_month": "<1x/month",
+        "never":                    "Never",
     }
     VISIT_AGE_COLS  = ["16-17 years old", "18-20 years old", "21-23 years old"]
     VISIT_DISP_COLS = ["16-17", "18-20", "21-23"]
 
-    freq_rows = [r for r in rows16 if str(list(r.values())[0]).strip() not in ("", "Total", "Visit Frequency")]
-    freq_labels_chart = []
+    freq_labels_chart = [VISIT_FREQ_LABELS_CHART[c] for c in Q15_ORDER]
     freq_matrix = {d: [] for d in VISIT_DISP_COLS}
+    for code in Q15_ORDER:
+        for age_col, disp in zip(VISIT_AGE_COLS, VISIT_DISP_COLS):
+            cnt = int(((csv_df["_age"] == age_col) & (csv_df["q15_visit_frequency"] == code)).sum())
+            freq_matrix[disp].append(cnt)
 
-    for r in freq_rows:
-        first_val = str(list(r.values())[0]).strip()
-        if first_val in ("", "Total"):
-            continue
-        freq_labels_chart.append(VISIT_FREQ_LABELS.get(first_val, first_val))
-        keys = list(r.keys())
-        for ki, age_col in enumerate(VISIT_AGE_COLS):
-            val = 0
-            if age_col in r:
-                try:
-                    val = int(r[age_col])
-                except (ValueError, TypeError):
-                    val = 0
-            freq_matrix[VISIT_DISP_COLS[ki]].append(val)
+    print(f"  chart_04 freq_matrix: {freq_matrix}")
 
     if freq_labels_chart:
         n_groups  = len(freq_labels_chart)

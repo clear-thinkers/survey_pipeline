@@ -63,7 +63,7 @@ const CSV_PATH      = path.join(BASE_DIR, "output", "412YZ", "survey_data_412YZ.
 const OUT_PATH      = path.join(BASE_DIR, "report", "412YZ", "report_412YZ_v2.docx");
 
 const SURVEY_MONTH  = "March 2026";
-const N_RESPONDENTS = 103;
+let   N_RESPONDENTS = 0; // set dynamically from CSV row count in main()
 const HDR_FILL      = "DCE6F1";
 
 // Prior-year Q1 coach satisfaction benchmarks (% top-2 box, from example report)
@@ -518,7 +518,7 @@ function sec_title() {
     makePara(
       "All individuals active with the 412 Youth Zone had the opportunity to " +
       "participate in a survey in early 2026. Surveys were administered on paper " +
-      "and results were digitized for this report."
+      "and online."
     ),
     new Paragraph({
       children: [
@@ -722,9 +722,20 @@ async function sec_housing() {
 }
 
 function sec_education_employment(dfCsv) {
+  // Read employed count and Q8 total directly from the 10_employment sheet
+  // so narrative percentages match the table.
+  const rows10raw = loadSheet("10_employment");
+  const data10    = rows10raw.filter((r) => !r._header);
+  const totalRow10 = data10.find((r) => firstCol(r) === "Total");
+  const nQ8Total  = totalRow10 ? (parseInt(totalRow10["Total"]) || dfCsv.length) : dfCsv.length;
+  const ftRow  = data10.find((r) => firstCol(r) === "Full time");
+  const ptRow  = data10.find((r) => firstCol(r) === "Part time");
+  const nFT    = ftRow ? (parseInt(ftRow["Total"]) || 0) : 0;
+  const nPT    = ptRow ? (parseInt(ptRow["Total"]) || 0) : 0;
+  const employed = nFT + nPT;
+
   const total      = dfCsv.length;
   const inSchool   = dfCsv.filter((r) => ["high_school","college_career","ged","graduate"].includes(r.q5_school_status)).length;
-  const employed   = dfCsv.filter((r) => ["yes_full_time","yes_part_time"].includes(r.q8_employment_status)).length;
   const inSRows    = dfCsv.filter((r) => ["high_school","college_career","ged","graduate"].includes(r.q5_school_status));
   const inSUnemp   = inSRows.filter((r) => r.q8_employment_status === "no");
   const inSUnempSk = inSUnemp.filter((r) => r.q8b_job_seeking === "yes").length;
@@ -741,7 +752,7 @@ function sec_education_employment(dfCsv) {
     makeHeading("Employment and Education", 1),
     makeBullet(`${pct(inSchool, total)} of all respondents reported being enrolled in school`),
     makeBullet(
-      `${pct(employed, total)} of all respondents reported being employed ` +
+      `${pct(employed, nQ8Total)} of all respondents reported being employed ` +
       `(${pct(empAlsoSch, employed)} of these youth are also enrolled in school)`
     ),
   ];
@@ -762,14 +773,20 @@ function sec_education_employment(dfCsv) {
 }
 
 function sec_job_tenure(dfCsv) {
-  const empRows   = dfCsv.filter((r) => ["yes_full_time","yes_part_time"].includes(r.q8_employment_status));
-  const nEmp      = empRows.length;
-  const longTenure = empRows.filter((r) => r.q8a_job_tenure === "more_6mo").length;
   const rows11 = loadSheet("11_job_tenure");
+  const data11 = rows11.filter((r) => !r._header);
+  const totRow  = data11.find((r) => firstCol(r) === "Total");
+  const nEmp    = totRow ? (parseInt(totRow["Total"]) || 0) : 0;
+  const longRow = data11.find((r) => firstCol(r).toLowerCase().includes("more than 6"));
+  const longTenure = longRow ? (parseInt(longRow["Total"]) || 0) : 0;
+  // nQ8Total: read from 10_employment sheet to get consistent denominator
+  const rows10 = loadSheet("10_employment");
+  const totRow10 = rows10.filter((r) => !r._header).find((r) => firstCol(r) === "Total");
+  const nQ8Total = totRow10 ? (parseInt(totRow10["Total"]) || dfCsv.length) : dfCsv.length;
   const cap = "Length of Employment for Youth Currently Employed";
   return [
     makePara(
-      `Of the ${pct(nEmp, N_RESPONDENTS)} of survey respondents that reported being employed, ` +
+      `Of the ${pct(nEmp, nQ8Total)} of survey respondents that reported being employed, ` +
       `${pct(longTenure, nEmp)} have been at their job for six months or longer.`
     ),
     makeCaption(cap),
@@ -915,7 +932,7 @@ async function sec_zone_visit() {
 
 function sec_program_impact(dfCsv) {
   const helpedAny = dfCsv.filter((r) => (r.q17_program_helped || "").trim() !== "").length;
-  const pctHelped = pct(helpedAny, N_RESPONDENTS);
+  const pctHelped = pct(helpedAny, dfCsv.length);
   const q16Total  = dfCsv.filter((r) => (r.q16_stay_focused || "") !== "").length;
   const q16Agree  = dfCsv.filter((r) => ["agree","somewhat_agree"].includes(r.q16_stay_focused)).length;
   const pctQ16    = pct(q16Agree, q16Total);
@@ -979,12 +996,15 @@ function sec_respect_environment() {
 }
 
 function sec_banking(dfCsv) {
-  const hasAccount = dfCsv.filter((r) => {
-    const parts = (r.q25_bank_account || "").split("|");
-    return parts.some((t) => t === " checking" || t === " savings" || t === "checking" || t === "savings");
-  }).length;
-  const pctHas = pct(hasAccount, N_RESPONDENTS);
   const subs = splitSheet("20_banking");
+  const bankRows = (subs["Bank Account Status by Age"] || []).filter((r) => !r._header);
+  const hasAcctRow = bankRows.find((r) => firstCol(r).toLowerCase().includes("currently have"));
+  const pctHas = (hasAcctRow && hasAcctRow["Percent of Total"])
+    ? hasAcctRow["Percent of Total"]
+    : pct(dfCsv.filter((r) => {
+        const parts = (r.q25_bank_account || "").split("|");
+        return parts.some((t) => ["checking", "savings"].includes(t.trim()));
+      }).length, dfCsv.length);
   const cap1 = "Banking Status by Age";
   const cap2 = "Methods Youth Use to Store, Receive, and Transfer Money, by Age";
   const cap3 = "Ways Respondents Use Their Bank Account(s), by Age";
@@ -1070,6 +1090,8 @@ async function main() {
 
   console.log("Loading CSV data...");
   const dfCsv = loadCsv();
+  N_RESPONDENTS = dfCsv.length;
+  console.log(`N_RESPONDENTS set to ${N_RESPONDENTS} (from CSV row count)`);
 
   console.log("Building sections...");
   const children = [
