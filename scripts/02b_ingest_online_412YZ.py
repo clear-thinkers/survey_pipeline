@@ -90,6 +90,15 @@ def first_multi(row, col_to_code, skip_val_col=None):
     return None
 
 
+def insert_after_first_present(df, new_col, value, anchor_cols):
+    """Insert new_col after the first anchor column that exists, else append."""
+    for anchor in anchor_cols:
+        if anchor in df.columns:
+            df.insert(df.columns.get_loc(anchor) + 1, new_col, value)
+            return
+    df[new_col] = value
+
+
 # ---------------------------------------------------------------------------
 # Lookup tables  (keys are whitespace-normalised to guard against double-spaces)
 # ---------------------------------------------------------------------------
@@ -595,8 +604,12 @@ def main():
 
     # Add source column if missing
     if "source" not in df_paper.columns:
-        df_paper.insert(df_paper.columns.get_loc("coach_name_corrected") + 1,
-                        "source", "paper")
+        insert_after_first_present(
+            df_paper,
+            "source",
+            "paper",
+            ["coach_name_corrected", "coach_name"],
+        )
     else:
         df_paper["source"] = df_paper["source"].fillna("paper")
 

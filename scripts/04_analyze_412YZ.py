@@ -359,22 +359,24 @@ def race_crosstab(df, multi_count=False):
         df2["_race"] = df2["race_ethnicity"].apply(race_once)
         df2 = df2.dropna(subset=["_race"])
         ct = pd.crosstab(df2["_race"], df2["_gender"])
+        n_total = len(df2)
     else:
+        race_df = df2[df2["race_ethnicity"].astype(str).str.strip() != ""].copy()
         rows = []
-        for _, row in df2.iterrows():
+        for _, row in race_df.iterrows():
             for t in split_pipe(row["race_ethnicity"]):
                 rows.append({"_race": token_to_race_group(t), "_gender": row["_gender"]})
         if not rows:
             return pd.DataFrame()
         tmp = pd.DataFrame(rows)
         ct = pd.crosstab(tmp["_race"], tmp["_gender"])
+        n_total = len(race_df)
 
     for g in GENDER_ORDER:
         if g not in ct.columns:
             ct[g] = 0
     ct = ct[GENDER_ORDER].copy()
     ct["Total"] = ct.sum(axis=1)
-    n_total = ct["Total"].sum()
     ct["Percent"] = ct["Total"].apply(lambda n: pct_str(n, n_total))
     ct = ct.reset_index().rename(columns={"_race": "Race/Ethnicity"})
 
@@ -382,7 +384,7 @@ def race_crosstab(df, multi_count=False):
     extra = [r for r in ct["Race/Ethnicity"].values if r not in RACE_GROUP_ORDER]
     ct = ct.set_index("Race/Ethnicity").reindex(present + extra).reset_index()
 
-    total_row = {"Race/Ethnicity": "Total", "Percent": "100%"}
+    total_row = {"Race/Ethnicity": "Total", "Percent": ""}
     for col in GENDER_ORDER + ["Total"]:
         total_row[col] = ct[col].sum()
     return pd.concat([ct, pd.DataFrame([total_row])], ignore_index=True)
@@ -402,15 +404,13 @@ def sec01_age(df):
 def sec02_gender_orient(df):
     df2 = df[df["_gender"] != "No answer"].copy()
     df2["_orient"] = df2["sexual_orientation"].apply(
-        lambda x: x.strip() if x.strip() else "No answer provided"
+        lambda x: x.strip() if x.strip() else "Unknown"
     )
     # Merge Gay or Lesbian and Same Gender Loving (matches prior report format)
     df2["_orient"] = df2["_orient"].replace(
         {"Gay or Lesbian": "Gay, Lesbian, or Same Gender Loving",
          "Same Gender Loving": "Gay, Lesbian, or Same Gender Loving"}
     )
-    known = df2["_orient"].unique().tolist()
-    order = ORIENT_ORDER + [o for o in known if o not in ORIENT_ORDER]
 
     ct = pd.crosstab(df2["_orient"], df2["_gender"])
     for g in GENDER_ORDER:
@@ -419,8 +419,11 @@ def sec02_gender_orient(df):
     ct = ct[GENDER_ORDER].copy()
     ct["Total"] = ct.sum(axis=1)
     ct = ct.reset_index().rename(columns={"_orient": "Sexual Orientation"})
-    present = [o for o in order if o in ct["Sexual Orientation"].values]
-    ct = ct.set_index("Sexual Orientation").reindex(present).reset_index()
+    ct["__unknown_last"] = ct["Sexual Orientation"].eq("Unknown")
+    ct = ct.sort_values(
+        by=["__unknown_last", "Total", "Sexual Orientation"],
+        ascending=[True, False, True],
+    ).drop(columns=["__unknown_last"]).reset_index(drop=True)
 
     header = pd.DataFrame([{
         "Sexual Orientation": "Number of Youth",

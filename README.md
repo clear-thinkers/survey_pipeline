@@ -17,10 +17,14 @@ prompts/           # Claude prompt templates
 | Script | Purpose |
 |--------|---------|
 | `01_extract.py` | OCR + field extraction via Claude |
-| `02_compile.py` | Merge extracted records into a dataset |
-| `03_qa.py` | Flag low-confidence or missing fields |
-| `04_analyze.py` | Summarize and aggregate responses |
-| `05_report.py` | Generate final report via Claude |
+| `01b_review.py` | Generate per-survey human review workbooks |
+| `02_compile.py` | Merge extracted records into survey CSVs |
+| `02b_ingest_online_412YZ.py` / `02b_ingest_online_IL.py` | Append SurveyMonkey exports |
+| `03_qa_412YZ.py` / `03_qa_IL.py` | Generate QA logs and reviewer workbooks |
+| `03b_apply_corrections_412YZ.py` | Apply 412YZ QA workbook corrections |
+| `03c_standardize_fields_412YZ.py` | Standardize 412YZ DOB and coach names |
+| `04_analyze_412YZ.py` | Produce the 412YZ analysis workbook |
+| `05_report_412YZ.js` | Generate the active 412YZ report docx |
 
 ## Setup
 
