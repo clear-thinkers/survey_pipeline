@@ -12,17 +12,18 @@ from __future__ import annotations
 
 import sys
 from collections import Counter
+import importlib
 from pathlib import Path
 from textwrap import fill
 
-import matplotlib  # pyright: ignore[reportMissingImports]
 import openpyxl
 import pandas as pd
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+matplotlib = importlib.import_module("matplotlib")
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # pyright: ignore[reportMissingImports]
+plt = importlib.import_module("matplotlib.pyplot")
 
 
 BASE_DIR = Path(__file__).parent.parent
