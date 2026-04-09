@@ -198,6 +198,23 @@ Q7A_LABEL_MAP = {
     "other":            "Other",
 }
 
+Q7A_OTHER_TEXT_MAP = {
+    "doesn't believe in process": "vote_wont_matter",
+}
+
+Q7A_OTHER_TEXT_THEME_MAP = {
+    "i am not registered as a pa id yet,": "Has not completed registration process",
+    "haven't registered yet": "Has not completed registration process",
+    "just didn't register": "Has not completed registration process",
+    "i just haven't gotten registered yet": "Has not completed registration process",
+    "im a felon": "Eligibility barrier",
+    "not a citizen": "Eligibility barrier",
+    "i chose not to vote": "Not interested",
+    "don't care for it": "Not interested",
+    "because it's my choice": "Not interested",
+    "im just not sure": "Unsure",
+}
+
 Q15_LABEL_MAP = {
     "every_week":               "Every week",
     "1_3_times_per_month":      "1-3 times per month",
@@ -207,6 +224,14 @@ Q15_LABEL_MAP = {
 Q15_ORDER = ["every_week", "1_3_times_per_month", "less_than_once_per_month", "never"]
 FREQUENT_VISIT = {"every_week", "1_3_times_per_month"}
 INFREQUENT_VISIT = {"less_than_once_per_month", "never"}
+
+Q16_LABEL_MAP = {
+    "agree": "Agree",
+    "somewhat_agree": "Somewhat agree",
+    "disagree": "Disagree",
+    "unsure": "Unsure, I don't have clear goals right now",
+}
+Q16_ORDER = ["agree", "somewhat_agree", "disagree", "unsure"]
 
 Q15A_LABEL_MAP = {
     "see_coach_staff":   "See my Youth Coach or other Zone Staff",
@@ -942,7 +967,7 @@ def sec14_transport(df):
     }
 
 
-def sec15_voter_reg(df):
+def build_sec15_voter_reg_outputs(df):
     voter_ages = ["18-20 years old", "21-23 years old"]
     vdf = df[df["_age"].isin(voter_ages)].copy()
     n_per_age = {age: (vdf[(vdf["_age"] == age) & (vdf["q7_registered_to_vote"] != "")]).shape[0]
@@ -963,13 +988,50 @@ def sec15_voter_reg(df):
     not_reg = vdf[vdf["q7_registered_to_vote"] == "no"]
     counter_by_age = {age: Counter() for age in voter_ages}
     counter_all = Counter()
+    mapping_rows = []
+    residual_counter = Counter()
+    residual_counter_by_age = {age: Counter() for age in voter_ages}
+    residual_theme_texts = {}
     for _, row in not_reg.iterrows():
-        for t in split_pipe(row["q7a_not_registered_reasons"]):
-            counter_by_age.get(row["_age"], Counter())[t] += 1
-            counter_all[t] += 1
+        age_bucket = row["_age"]
+        base_codes = split_pipe(row["q7a_not_registered_reasons"])
+        other_text = (row["q7a_other_text"] or "").strip()
+        normalized_other = " ".join(other_text.lower().split())
+        mapped_code = Q7A_OTHER_TEXT_MAP.get(normalized_other, "")
+        has_mapping = bool(mapped_code)
+
+        final_codes = [code for code in base_codes if not (code == "other" and has_mapping)]
+        if mapped_code and mapped_code not in final_codes:
+            final_codes.append(mapped_code)
+
+        for code in final_codes:
+            counter_by_age[age_bucket][code] += 1
+            counter_all[code] += 1
+
+        if "other" in base_codes:
+            residual_reason = ""
+            residual_theme = ""
+            if not has_mapping:
+                residual_reason = other_text if other_text else "No free-text provided"
+                residual_theme = Q7A_OTHER_TEXT_THEME_MAP.get(normalized_other, residual_reason)
+                residual_counter[residual_theme] += 1
+                residual_counter_by_age[age_bucket][residual_theme] += 1
+                residual_theme_texts.setdefault(residual_theme, set()).add(residual_reason)
+            mapping_rows.append({
+                "survey_id": row["survey_id"],
+                "age_range": age_bucket,
+                "original_q7a_codes": " | ".join(base_codes),
+                "q7a_other_text": other_text,
+                "mapped_existing_reason": Q7A_LABEL_MAP.get(mapped_code, ""),
+                "final_q7a_codes": " | ".join(final_codes),
+                "left_under_other": "Yes" if not has_mapping else "No",
+                "residual_other_reason": residual_reason,
+                "residual_other_theme": residual_theme,
+            })
 
     rows_b = []
     order = list(Q7A_LABEL_MAP.keys()) + [k for k in counter_all if k not in Q7A_LABEL_MAP]
+    base_rows = []
     for code in order:
         n = counter_all.get(code, 0)
         if n == 0:
@@ -978,8 +1040,24 @@ def sec15_voter_reg(df):
         for age in voter_ages:
             row_data[age] = counter_by_age[age].get(code, 0)
         row_data["Total"] = n
+        base_rows.append((code, row_data))
+    base_rows.sort(key=lambda item: -item[1]["Total"])
+
+    display_residual_themes = [
+        theme for theme, count in residual_counter.items()
+        if count > 0 and theme != "No free-text provided"
+    ]
+    display_residual_themes.sort(key=lambda theme: (-residual_counter[theme], theme))
+
+    for code, row_data in base_rows:
         rows_b.append(row_data)
-    rows_b.sort(key=lambda r: -r["Total"])
+        if code == "other":
+            for theme in display_residual_themes:
+                child_row = {"Reason Not Registered": "    " + theme}
+                for age in voter_ages:
+                    child_row[age] = residual_counter_by_age[age].get(theme, 0)
+                child_row["Total"] = residual_counter.get(theme, 0)
+                rows_b.append(child_row)
     table_b = pd.DataFrame(rows_b)
 
     eligible = vdf[vdf["q7_registered_to_vote"].isin(["yes", "no"])].copy()
@@ -1064,12 +1142,41 @@ def sec15_voter_reg(df):
         },
     ])
 
+    mapping_df = pd.DataFrame(mapping_rows)
+    repeated_residual_df = pd.DataFrame([
+        {
+            "Residual other theme": reason,
+            "Total Youth": count,
+            "Source texts": " | ".join(sorted(residual_theme_texts.get(reason, set()))),
+        }
+        for reason, count in residual_counter.items() if count > 1
+    ])
+    if not repeated_residual_df.empty:
+        repeated_residual_df = repeated_residual_df.sort_values(
+            by=["Total Youth", "Residual other theme"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
     return {
         "Voter Registration by Age": table_a,
         "Not Registered Reasons by Age": table_b,
         "Registration by Gender (18-23)": table_c,
         "Registration by Sexual Orientation (18-23)": table_e,
         "Voting Narrative Support": table_d,
+        "Q7a other mapping audit": mapping_df,
+        "Repeated residual other reasons": repeated_residual_df,
+    }
+
+
+def sec15_voter_reg(df):
+    return build_sec15_voter_reg_outputs(df)
+
+
+def sec15_voter_reg_reference(df):
+    outputs = build_sec15_voter_reg_outputs(df)
+    return {
+        "Q7a other mapping audit": outputs["Q7a other mapping audit"],
+        "Repeated residual other reasons": outputs["Repeated residual other reasons"],
     }
 
 
@@ -1094,6 +1201,59 @@ def sec16_visit(df):
         ct_b = ct_b.rename(columns={"Label": "Visit Reason (frequent visitors)"})
     else:
         ct_b = None
+
+    reason_combo_order = [
+        "see_coach_staff",
+        "food",
+        "scheduled_activity",
+        "work_on_goals",
+        "learn_skills",
+        "safe_place",
+        "socialize",
+        "escape_problems",
+        "service_providers",
+        "laundry_shower",
+        "health_counseling",
+        "computers",
+    ]
+    reason_combo_labels = {
+        "see_coach_staff": "See my Youth Coach",
+        "food": "Eat food",
+        "scheduled_activity": "Scheduled activity",
+        "work_on_goals": "Work toward my goals",
+        "learn_skills": "Learn new things, skills",
+        "safe_place": "Safe place",
+        "socialize": "Socialize/see friends",
+        "escape_problems": "Escape problems elsewhere",
+        "service_providers": "Service providers",
+        "laundry_shower": "Do laundry, shower, etc.",
+        "health_counseling": "Health care, counseling",
+        "computers": "Access to computers",
+    }
+    combo_visit_groups = [
+        ("every_week", "Every week"),
+        ("1_3_times_per_month", "1 to 3 times per month"),
+    ]
+
+    combo_rows = []
+    combo_base = df[df["q15_visit_frequency"].isin([code for code, _ in combo_visit_groups])]
+    combo_total_n = len(combo_base)
+    for reason_code in reason_combo_order:
+        row = {"Reason": reason_combo_labels[reason_code]}
+        total_count = 0
+        for visit_code, visit_label in combo_visit_groups:
+            visit_df = combo_base[combo_base["q15_visit_frequency"] == visit_code]
+            visit_total = len(visit_df)
+            reason_count = int(sum(reason_code in split_pipe(val) for val in visit_df["q15a_visit_reasons"]))
+            row[f"{visit_label} Count"] = reason_count
+            row[f"{visit_label} Percent"] = pct_str(reason_count, visit_total)
+            total_count += reason_count
+        row["Total Count"] = total_count
+        row["Total Percent"] = pct_str(total_count, combo_total_n)
+        combo_rows.append(row)
+    table_b2 = pd.DataFrame(combo_rows)
+    if not table_b2.empty:
+        table_b2 = table_b2.sort_values(by=["Total Count", "Reason"], ascending=[False, True]).reset_index(drop=True)
 
     infreq = df[df["q15_visit_frequency"].isin(INFREQUENT_VISIT)]
     ct_c = crosstab_age(infreq, "q15b_visit_barriers", Q15B_LABEL_MAP)
@@ -1164,12 +1324,45 @@ def sec16_visit(df):
         {"Metric": "Infrequent/never visitors 18-20 wanting coach invitation", "Count": _count_multi(infreq_18_20, "q15b_visit_barriers", "coach_invitation"), "Denominator": len(infreq_18_20), "Percent": pct_str(_count_multi(infreq_18_20, "q15b_visit_barriers", "coach_invitation"), len(infreq_18_20))},
     ])
 
+    valid_focus = df[(df["q15_visit_frequency"] != "") & (df["q16_stay_focused"] != "")]
+    focus_rows = []
+    for visit_code in Q15_ORDER:
+        visit_df = valid_focus[valid_focus["q15_visit_frequency"] == visit_code]
+        visit_total = len(visit_df)
+        row = {"Visit Frequency": Q15_LABEL_MAP[visit_code], "Respondents": visit_total}
+        for focus_code in Q16_ORDER:
+            focus_count = int((visit_df["q16_stay_focused"] == focus_code).sum())
+            row[f"{Q16_LABEL_MAP[focus_code]} Count"] = focus_count
+            row[Q16_LABEL_MAP[focus_code]] = pct_str(focus_count, visit_total)
+        focus_rows.append(row)
+    table_f = pd.DataFrame(focus_rows)
+
+    at_least_monthly = valid_focus[valid_focus["q15_visit_frequency"].isin(FREQUENT_VISIT)]
+    less_than_monthly = valid_focus[valid_focus["q15_visit_frequency"].isin(INFREQUENT_VISIT)]
+    total_q16 = len(valid_focus)
+    agree_total = int((valid_focus["q16_stay_focused"] == "agree").sum())
+    agree_some_at_least_monthly = int(at_least_monthly["q16_stay_focused"].isin(["agree", "somewhat_agree"]).sum())
+    agree_some_less_than_monthly = int(less_than_monthly["q16_stay_focused"].isin(["agree", "somewhat_agree"]).sum())
+    unsure_at_least_monthly = int((at_least_monthly["q16_stay_focused"] == "unsure").sum())
+    unsure_less_than_monthly = int((less_than_monthly["q16_stay_focused"] == "unsure").sum())
+
+    table_g = pd.DataFrame([
+        {"Metric": "Overall fully agree Youth Zone helps stay focused", "Count": agree_total, "Denominator": total_q16, "Percent": pct_str(agree_total, total_q16)},
+        {"Metric": "At least monthly visitors agree or somewhat agree Youth Zone helps stay focused", "Count": agree_some_at_least_monthly, "Denominator": len(at_least_monthly), "Percent": pct_str(agree_some_at_least_monthly, len(at_least_monthly))},
+        {"Metric": "Less than monthly or never visitors agree or somewhat agree Youth Zone helps stay focused", "Count": agree_some_less_than_monthly, "Denominator": len(less_than_monthly), "Percent": pct_str(agree_some_less_than_monthly, len(less_than_monthly))},
+        {"Metric": "At least monthly visitors unsure about goals", "Count": unsure_at_least_monthly, "Denominator": len(at_least_monthly), "Percent": pct_str(unsure_at_least_monthly, len(at_least_monthly))},
+        {"Metric": "Less than monthly or never visitors unsure about goals", "Count": unsure_less_than_monthly, "Denominator": len(less_than_monthly), "Percent": pct_str(unsure_less_than_monthly, len(less_than_monthly))},
+    ])
+
     return {
         "Visit Frequency by Age": table_a,
         "Visit Reasons (frequent)": ct_b,
+        "Visit Reasons by Visit Frequency": table_b2,
         "Visit Barriers (infrequent)": ct_c,
         "Visit Frequency Narrative Support": table_d,
         "Visit Reason and Barrier Narrative Support": table_e,
+        "Stay Focused by Visit Frequency (Q16)": table_f,
+        "Stay Focused Narrative Support": table_g,
     }
 
 
@@ -1180,12 +1373,10 @@ def sec17_program_impact(df):
     else:
         ct_a = None
 
-    Q16_LABEL_MAP = {"agree": "Agree", "somewhat_agree": "Somewhat agree",
-                     "disagree": "Disagree", "unsure": "Unsure"}
     q16 = df["q16_stay_focused"].replace("", pd.NA).dropna().value_counts()
     total_q16 = q16.sum()
     table_b = pd.DataFrame([{
-        "Q16 - Coach/Zone helps stay focused": Q16_LABEL_MAP.get(k, k),
+        "Q16 - Coach/Zone helps stay focused": {**Q16_LABEL_MAP, "unsure": "Unsure"}.get(k, k),
         "Count": v, "Percent": pct_str(v, total_q16),
     } for k, v in q16.items()])
 
@@ -1451,6 +1642,7 @@ SECTIONS = [
     ("13_left_job_ref",   "13A. Left Job Mapping Reference",             sec13_left_job_reference),
     ("14_transport",      "14. Transportation (Q6 + Q6a + Q9)",          sec14_transport),
     ("15_voter_reg",      "15. Voter Registration (Q7 + Q7a)",           sec15_voter_reg),
+    ("15_voter_reg_ref",  "15A. Voter Registration Mapping Reference",    sec15_voter_reg_reference),
     ("16_visit",          "16. Visit Frequency + Reasons + Barriers",    sec16_visit),
     ("17_impact",         "17. Program Impact (Q17 + Q16 + Q21)",        sec17_program_impact),
     ("18_respect",        "18. Staff & Peer Respect (Q18 + Q19)",        sec18_respect),
@@ -1816,6 +2008,194 @@ def generate_charts():
         _apply_base_style(ax)
         ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
         _save(fig, "chart_04_visit_frequency.png")
+
+    # ------------------------------------------------------------------
+    # Chart 10: Stay Focused on Goals by Visit Frequency — grouped % bars
+    # ------------------------------------------------------------------
+    focus_df = csv_df[(csv_df["q15_visit_frequency"] != "") & (csv_df["q16_stay_focused"] != "")].copy()
+    focus_visit_labels = ["Every week", "1-3 times per month", "Less than once per\nmonth", "Never"]
+    focus_resp_labels = [
+        "Agree",
+        "Somewhat agree",
+        "Disagree",
+        "Unsure, I don't have clear goals right now",
+    ]
+    focus_resp_colors = [PALETTE[0], "#6EA0E0", "#C1440E", "#CFCFCF"]
+    focus_matrix = {label: [] for label in focus_resp_labels}
+
+    for visit_code in Q15_ORDER:
+        visit_df = focus_df[focus_df["q15_visit_frequency"] == visit_code]
+        visit_total = len(visit_df)
+        for focus_code, focus_label in zip(Q16_ORDER, focus_resp_labels):
+            count = int((visit_df["q16_stay_focused"] == focus_code).sum())
+            pct_value = (100 * count / visit_total) if visit_total else 0
+            focus_matrix[focus_label].append(pct_value)
+
+    if len(focus_df) > 0:
+        n_groups = len(focus_visit_labels)
+        n_bars = len(focus_resp_labels)
+        width = 0.18
+        x = np.arange(n_groups)
+
+        fig, ax = plt.subplots(figsize=(9.6, 5.6))
+        for bi, (resp_label, color) in enumerate(zip(focus_resp_labels, focus_resp_colors)):
+            offsets = x + (bi - (n_bars - 1) / 2) * width
+            vals = focus_matrix[resp_label]
+            bars = ax.bar(offsets, vals, width=width, color=color, label=resp_label, zorder=3)
+            for bar, val in zip(bars, vals):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    val + 1.5,
+                    f"{round(val):.0f}%",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8.5,
+                    color=TEXT_COLOR,
+                )
+
+        ax.set_xticks(x)
+        ax.set_xticklabels(focus_visit_labels, fontsize=10)
+        ax.set_ylim(0, max(max(vals) for vals in focus_matrix.values()) + 16)
+        ax.yaxis.set_major_locator(mticker.MultipleLocator(20))
+        ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda y, _: f"{int(y)}%"))
+        ax.set_xlabel("Reported Frequency Visiting the Youth Zone", fontsize=10, color=TEXT_COLOR, labelpad=10)
+        ax.set_title(
+            f"The Youth Zone Helps Me Stay\nFocused On My Goals\nMarch 2026, n={len(focus_df)}",
+            fontsize=15,
+            fontweight="bold",
+            color=TEXT_COLOR,
+            pad=22,
+        )
+        _apply_base_style(ax)
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.04),
+            ncol=4,
+            fontsize=9,
+            frameon=False,
+            handlelength=0.8,
+            handletextpad=0.4,
+            columnspacing=1.1,
+        )
+        _save(fig, "chart_10_stay_focused_visit_frequency.png")
+
+    # ------------------------------------------------------------------
+    # Chart 11: Visit reasons by frequency — integrated table/chart
+    # ------------------------------------------------------------------
+    reason_rows = _load_sheet("16_visit")
+    reason_combo_rows = []
+    in_reason_combo = False
+    for row in reason_rows:
+        values = list(row.values())
+        first = str(values[0]).strip() if values else ""
+        if first == "Visit Reasons by Visit Frequency":
+            in_reason_combo = True
+            continue
+        if in_reason_combo:
+            if len(set(str(v).strip() for v in values if str(v).strip() != "")) == 1 and first and len([v for v in values if str(v).strip() != ""]) == 1:
+                break
+            if first:
+                reason_combo_rows.append(row)
+
+    if reason_combo_rows:
+        header = reason_combo_rows[0]
+        data_rows = reason_combo_rows[1:]
+        parsed_rows = []
+        for row in data_rows:
+            reason = str(row.get(header[list(header.keys())[0]], row.get("Reason", ""))).strip()
+            if not reason:
+                continue
+            weekly_count = int(float(str(row.get("Every week Count", 0) or 0)))
+            monthly_count = int(float(str(row.get("1 to 3 times per month Count", 0) or 0)))
+            total_count = int(float(str(row.get("Total Count", 0) or 0)))
+            weekly_pct = float(str(row.get("Every week Percent", "0")).replace("%", "") or 0)
+            monthly_pct = float(str(row.get("1 to 3 times per month Percent", "0")).replace("%", "") or 0)
+            total_pct = float(str(row.get("Total Percent", "0")).replace("%", "") or 0)
+            parsed_rows.append({
+                "reason": reason,
+                "weekly_count": weekly_count,
+                "monthly_count": monthly_count,
+                "total_count": total_count,
+                "weekly_pct": weekly_pct,
+                "monthly_pct": monthly_pct,
+                "total_pct": total_pct,
+            })
+
+        weekly_n = int((csv_df["q15_visit_frequency"] == "every_week").sum())
+        monthly_n = int((csv_df["q15_visit_frequency"] == "1_3_times_per_month").sum())
+        combo_total_n = weekly_n + monthly_n
+
+        if parsed_rows and combo_total_n > 0:
+            fig_h = max(4.8, 1.4 + 0.33 * len(parsed_rows))
+            fig, ax = plt.subplots(figsize=(9.6, fig_h))
+            ax.set_xlim(0, 1)
+            ax.set_ylim(0, 1)
+            ax.axis("off")
+
+            left = 0.03
+            reason_w = 0.26
+            week_w = 0.19
+            month_w = 0.21
+            total_w = 0.10
+            cell_h = 0.055
+            top = 0.92
+            header_fill = "#DCE6F1"
+            bar_fill = "#5B88C2"
+            border = "#6B7280"
+
+            ax.text(0.5, 0.985, "What Are the Main Reasons Youth Come to the Youth Zone?",
+                    ha="center", va="top", fontsize=13.5, fontweight="bold", color=TEXT_COLOR)
+            ax.text(0.5, 0.948, "Among youth who reported visiting at least monthly, March 2026",
+                    ha="center", va="top", fontsize=9.5, color=TEXT_COLOR, style="italic")
+
+            y = top - cell_h
+            x_positions = [left, left + reason_w, left + reason_w + week_w, left + reason_w + week_w + month_w]
+            widths = [reason_w, week_w, month_w, total_w]
+            headers = ["Frequency at the Zone", "Every week", "1 to 3 times\nper month", "Total"]
+
+            for x0, width, label in zip(x_positions, widths, headers):
+                fill = "white" if label == "Frequency at the Zone" else header_fill
+                ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor=fill, edgecolor=border, linewidth=0.7))
+                ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
+                        fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Frequency at the Zone" else None,
+                        style="italic" if label == "Frequency at the Zone" else None)
+
+            y -= cell_h
+            counts = ["Number of Youth", str(weekly_n), str(monthly_n), str(combo_total_n)]
+            for x0, width, label in zip(x_positions, widths, counts):
+                ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+                ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
+                        fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Number of Youth" else None,
+                        style="italic" if label == "Number of Youth" else None)
+
+            bar_cols = [
+                (left + reason_w, week_w, "weekly_pct", "weekly_count"),
+                (left + reason_w + week_w, month_w, "monthly_pct", "monthly_count"),
+                (left + reason_w + week_w + month_w, total_w, "total_pct", "total_count"),
+            ]
+
+            for row in parsed_rows:
+                y -= cell_h
+                ax.add_patch(plt.Rectangle((left, y), reason_w, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+                ax.text(left + 0.006, y + cell_h / 2, row["reason"], ha="left", va="center", fontsize=9.5, color=TEXT_COLOR)
+
+                for x0, width, pct_key, count_key in bar_cols:
+                    ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+                    pct_val = row[pct_key]
+                    if pct_val > 0:
+                        bar_margin = 0.003
+                        usable_w = width - 2 * bar_margin
+                        bar_w = usable_w * min(pct_val / 100, 1)
+                        ax.add_patch(plt.Rectangle((x0 + bar_margin, y + 0.006), bar_w, cell_h - 0.012,
+                                                   facecolor=bar_fill, edgecolor="none"))
+                    if pct_key == "total_pct":
+                        ax.text(x0 + width / 2, y + cell_h / 2, str(row[count_key]), ha="center", va="center",
+                                fontsize=9.5, color=TEXT_COLOR)
+                    else:
+                        ax.text(x0 + width - 0.008, y + cell_h / 2, f"{int(round(pct_val))}%", ha="right", va="center",
+                                fontsize=9.5, color=TEXT_COLOR)
+
+            _save(fig, "chart_11_visit_reasons_combo.png")
 
     # ------------------------------------------------------------------
     # Chart 5: NPS — single 100% stacked horizontal bar

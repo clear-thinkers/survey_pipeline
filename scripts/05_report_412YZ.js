@@ -1394,8 +1394,7 @@ function sec_voter_reg(dfCsv) {
     makePara(
       `${dontKnowHowCount} of the ${reasonRows.length} youth who provided a reason (${pctDontKnowHow}) said they did not know how to register, and ${inconsistentRegistered === 0 ? "unlike March 2025, no respondents in the current data reported being registered while also selecting a reason for not being registered" : `${inconsistentRegistered} respondents reported being registered while also selecting a reason for not being registered`}.`
     ),
-    makeCaption(cap2),
-    makeTable(dfReasons, "__none__", cap2),
+    await embedChart("chart_11_visit_reasons_combo.png", 7.1),
     makePara(""),
   ];
 }
@@ -1405,9 +1404,11 @@ async function sec_zone_visit() {
   const dfFreq    = subs["Visit Frequency by Age"]       || [];
   const dfReasons = subs["Visit Reasons (frequent)"]     || [];
   const dfBarriers= subs["Visit Barriers (infrequent)"]  || [];
+  const dfFocusSupport = subs["Stay Focused Narrative Support"] || [];
   const freqData = dfFreq.filter((r) => !r._header);
   const reasonData = dfReasons.filter((r) => !r._header);
   const barrierData = dfBarriers.filter((r) => !r._header);
+  const focusSupportData = dfFocusSupport.filter((r) => !r._header);
   const num = (row, col) => Number(String(row?.[col] ?? "").replace(/[^0-9.-]/g, "")) || 0;
 
   const totalVisitRow = freqData.find((r) => firstCol(r) === "Total");
@@ -1460,6 +1461,17 @@ async function sec_zone_visit() {
   const invite18to20 = num(inviteRow, "18-20 years old");
   const infrequent18to20 = num(barrierRespondentsRow, "18-20 years old");
 
+  const overallAgreeRow = focusSupportData.find((r) => firstCol(r) === "Overall fully agree Youth Zone helps stay focused");
+  const monthlyAgreeRow = focusSupportData.find((r) => firstCol(r) === "At least monthly visitors agree or somewhat agree Youth Zone helps stay focused");
+  const infrequentAgreeRow = focusSupportData.find((r) => firstCol(r) === "Less than monthly or never visitors agree or somewhat agree Youth Zone helps stay focused");
+  const monthlyUnsureRow = focusSupportData.find((r) => firstCol(r) === "At least monthly visitors unsure about goals");
+  const infrequentUnsureRow = focusSupportData.find((r) => firstCol(r) === "Less than monthly or never visitors unsure about goals");
+  const pctOverallAgree = String(overallAgreeRow?.Percent || "[PLACEHOLDER]");
+  const pctMonthlyAgree = String(monthlyAgreeRow?.Percent || "[PLACEHOLDER]");
+  const pctInfrequentAgree = String(infrequentAgreeRow?.Percent || "[PLACEHOLDER]");
+  const pctMonthlyUnsure = String(monthlyUnsureRow?.Percent || "[PLACEHOLDER]");
+  const pctInfrequentUnsure = String(infrequentUnsureRow?.Percent || "[PLACEHOLDER]");
+
   const cap1 = "Visit Frequency by Age";
   const cap2 = "What Are the Main Reasons Youth Come to the Youth Zone?";
   const cap3 = "What Would Make Someone Who Rarely Visits the Zone Want to Come, by Age";
@@ -1473,6 +1485,12 @@ async function sec_zone_visit() {
     makeCaption(cap1),
     makeTable(dfFreq, "Total", cap1),
     await embedChart("chart_04_visit_frequency.png", 5.5),
+    makePara(
+      `${pctOverallAgree} of respondents fully agreed that support from the Youth Zone helps them stay focused on their goals, up from 71% in February 2025. ` +
+      `As in the prior report, there appears to be a mild correlation between attendance at the Zone and youth reporting that the Youth Zone helps them stay focused on their goals: ${pctMonthlyAgree} of youth who report attending the Zone at least monthly agree or somewhat agree, compared to ${pctInfrequentAgree} of youth who report attending less than monthly or never. ` +
+      `Youth who attend less frequently are also more likely to report not having clear goals right now (${pctInfrequentUnsure} vs. ${pctMonthlyUnsure}).`
+    ),
+    await embedChart("chart_10_stay_focused_visit_frequency.png", 6.6),
     makePara(
       `As in prior years, most youth who come at least monthly report coming to the 412 Youth Zone downtown to see their Youth Coach or other Zone staff (${pctSeeCoach}). ` +
       `Food (${pctFood}) and scheduled activities (${pctScheduled}) were also among the most common reasons for coming this year, ahead of working toward goals (${pctGoals}). ` +

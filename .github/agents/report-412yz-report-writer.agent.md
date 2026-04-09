@@ -27,6 +27,7 @@ When writing insights, you must follow `.github/skills/survey-report-writing/SKI
 - DO NOT edit report sections other than the user-requested scope.
 - DO NOT make unrelated edits outside the requested reporting workflow.
 - DO NOT change table-building logic, sheet-loading logic, chart embedding, captions, bullet-computation logic, or helper utilities unless a report-section-specific fix is required to support the requested section.
+- When adding or modifying a chart in scope, always give the chart a visible title; for count-based bar charts, also add count labels above the bars and keep using the existing palette for that chart family.
 - DO NOT invent percentages, counts, or year-over-year figures; every numeric claim in prose must trace back to the relevant analysis sheets, `output/412YZ/survey_data_412YZ.csv`, or the prior-year report.
 - DO NOT leave the requested section half-updated: if narrative replication depends on missing tables or charts, extend the needed analysis outputs first and then complete the section.
 - DO follow the survey-report-writing skill's insight rules: mirror prior-year voice, keep narrative concise, call out material year-over-year changes explicitly, avoid speculation, and preserve `placeholder_inline()` calls when a value is not computable.
