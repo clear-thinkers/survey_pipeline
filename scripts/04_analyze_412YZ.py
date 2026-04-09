@@ -109,6 +109,18 @@ Q10_LABEL_MAP = {
     "something_else":        "Something else",
 }
 
+Q10_OTHER_TEXT_MAP = {
+    "noting on my resume": "limited_experience",
+    "nothing on my resume": "limited_experience",
+    "distance": "transportation",
+    "they say they are hiring but are turning people away": "not_getting_called",
+}
+
+Q10_OTHER_TEXT_THEME_MAP = {
+    "bad job market": "Bad job market",
+    "bad job marketing": "Bad job market",
+}
+
 Q11_LABEL_MAP = {
     "quit":               "Quit",
     "found_better":       "Found a better job",
@@ -116,7 +128,26 @@ Q11_LABEL_MAP = {
     "fired_attendance":   "Fired: Missed work",
     "pregnancy_parenting":"Pregnant or Parenting",
     "fired_performance":  "Fired: Poor performance",
+    "illness":            "Illness",
     "other":              "Other",
+}
+
+Q11_OTHER_TEXT_MAP = {
+    "got sick": "illness",
+    "medical issue": "illness",
+    "pregnant": "pregnancy_parenting",
+    "child needs and depression": "pregnancy_parenting",
+    "fired for calling off to take my son to the hospital": "fired_attendance",
+    "the job was over": "seasonal",
+    "school": "quit",
+    "moved couldn't get to work": "transportation",
+    "income": "low_pay_hours",
+    "my client tried to fight me, hr let me go.": "poor_conditions",
+}
+
+Q11_OTHER_TEXT_THEME_MAP = {
+    "medical issue": "Health-related issue",
+    "got sick": "Health-related issue",
 }
 
 Q11A_LABEL_MAP = {
@@ -555,6 +586,12 @@ def sec09_education(df):
     not_school = df[df["q5_school_status"] == "not_in_school"]
 
     rows = []
+    rows.append({
+        "Group": "Currently Enrolled in School",
+        "Level": "Total Currently Enrolled",
+        "Count": len(in_school),
+        "Percent of All": pct_str(len(in_school), total_resp),
+    })
     for code, label in [("graduate", "Graduate School"), ("college_career", "College/Vocational"),
                         ("ged", "GED Program"), ("high_school", "High School")]:
         n = (in_school["q5_school_status"] == code).sum()
@@ -632,84 +669,214 @@ def sec11_job_tenure(df):
 
 
 def sec12_job_barriers(df):
-    non_ft = df[df["q8_employment_status"] != "yes_full_time"]
-    # Denominator = youth who actually answered Q10 (had job barriers to report)
-    denom = int((non_ft["q10_job_barriers"].str.strip() != "").sum())
+    summary_df, _, _ = build_sec12_job_barriers_outputs(df)
+    return summary_df
+
+
+def build_sec12_job_barriers_outputs(df):
+    answered = df[df["q10_job_barriers"].str.strip() != ""].copy()
+    denom = int(len(answered))
+    pct_col = f"Percent of Youth with Barriers (N = {denom})"
 
     counter = Counter()
-    for v in non_ft["q10_job_barriers"]:
-        for t in split_pipe(v):
-            counter[t] += 1
+    mapping_rows = []
+    residual_counter = Counter()
+    residual_theme_texts = {}
+
+    for row in answered.itertuples(index=False):
+        base_codes = split_pipe(row.q10_job_barriers)
+        other_text = (row.q10_something_else_text or "").strip()
+        normalized_other = " ".join(other_text.lower().split())
+        mapped_code = Q10_OTHER_TEXT_MAP.get(normalized_other, "")
+
+        final_codes = [code for code in base_codes if not (code == "something_else" and mapped_code)]
+        if mapped_code and mapped_code not in final_codes:
+            final_codes.append(mapped_code)
+        for code in final_codes:
+            counter[code] += 1
+
+        if "something_else" in base_codes:
+            residual_reason = ""
+            residual_theme = ""
+            if not mapped_code:
+                residual_reason = other_text if other_text else "No free-text provided"
+                residual_theme = Q10_OTHER_TEXT_THEME_MAP.get(normalized_other, residual_reason)
+                residual_counter[residual_theme] += 1
+                residual_theme_texts.setdefault(residual_theme, set()).add(residual_reason)
+            mapping_rows.append({
+                "survey_id": row.survey_id,
+                "employment_status": row.q8_employment_status,
+                "original_q10_codes": " | ".join(base_codes),
+                "something_else_text": other_text,
+                "mapped_existing_reason": Q10_LABEL_MAP.get(mapped_code, ""),
+                "final_q10_codes": " | ".join(final_codes),
+                "left_under_something_else": "Yes" if not mapped_code else "No",
+                "residual_something_else_reason": residual_reason,
+                "residual_something_else_theme": residual_theme,
+            })
 
     rows = []
     order = list(Q10_LABEL_MAP.keys()) + [k for k in counter if k not in Q10_LABEL_MAP]
     for code in order:
         n = counter.get(code, 0)
-        if n > 0:
+        if n >= 2:
             rows.append({
                 "Barrier": Q10_LABEL_MAP.get(code, code),
                 "Total Youth": n,
-                "Percent of Youth with Barriers": pct_str(n, denom),
+                pct_col: pct_str(n, denom),
             })
-    rows.sort(key=lambda r: -r["Total Youth"])
-    return pd.DataFrame(rows)
+    rows.sort(key=lambda r: (-r["Total Youth"], r["Barrier"]))
+
+    mapping_df = pd.DataFrame(mapping_rows)
+    repeated_residual_df = pd.DataFrame([
+        {
+            "Residual something else theme": reason,
+            "Total Youth": count,
+            "Source texts": " | ".join(sorted(residual_theme_texts.get(reason, set()))),
+        }
+        for reason, count in residual_counter.items() if count > 1
+    ])
+    if not repeated_residual_df.empty:
+        repeated_residual_df = repeated_residual_df.sort_values(
+            by=["Total Youth", "Residual something else theme"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
+    return pd.DataFrame(rows), mapping_df, repeated_residual_df
+
+
+def sec12_job_barriers_reference(df):
+    summary_df, mapping_df, repeated_residual_df = build_sec12_job_barriers_outputs(df)
+    return {
+        "Updated Q10 job barriers table": summary_df,
+        "Q10 something_else mapping audit": mapping_df,
+        "Repeated residual something_else reasons": repeated_residual_df,
+    }
 
 
 def sec13_left_job(df):
+    summary_df, _, _ = build_sec13_left_job_outputs(df)
+    return summary_df
+
+
+def build_sec13_left_job_outputs(df):
     total_left = df[df["q11_left_job_reasons"] != ""].shape[0]
+    pct_col = f"Percent Who Left a Job (N = {total_left})"
 
     counter = Counter()
-    for v in df["q11_left_job_reasons"]:
-        for t in split_pipe(v):
-            counter[t] += 1
-
     quit_counter = Counter()
-    for v in df["q11a_quit_reasons"]:
-        for t in split_pipe(v):
-            quit_counter[t] += 1
+    mapping_rows = []
+    residual_counter = Counter()
+    residual_theme_texts = {}
+
+    for row in df.itertuples(index=False):
+        base_codes = split_pipe(row.q11_left_job_reasons)
+        base_quit_codes = split_pipe(row.q11a_quit_reasons)
+        other_text = (row.q11_other_text or "").strip()
+        normalized_other = " ".join(other_text.lower().split())
+        mapped_code = Q11_OTHER_TEXT_MAP.get(normalized_other, "")
+        mapped_parent_code = ""
+        mapped_quit_code = ""
+        if mapped_code in Q11_LABEL_MAP:
+            mapped_parent_code = mapped_code
+        elif mapped_code in Q11A_LABEL_MAP:
+            mapped_parent_code = "quit"
+            mapped_quit_code = mapped_code
+
+        has_mapping = bool(mapped_parent_code or mapped_quit_code)
+        final_codes = [code for code in base_codes if not (code == "other" and has_mapping)]
+        if mapped_parent_code and mapped_parent_code not in final_codes:
+            final_codes.append(mapped_parent_code)
+        final_quit_codes = list(base_quit_codes)
+        if mapped_quit_code and mapped_quit_code not in final_quit_codes:
+            final_quit_codes.append(mapped_quit_code)
+        for code in final_codes:
+            counter[code] += 1
+        for code in final_quit_codes:
+            quit_counter[code] += 1
+
+        if "other" in base_codes:
+            residual_reason = ""
+            residual_theme = ""
+            if not has_mapping:
+                residual_reason = other_text if other_text else "No free-text provided"
+                residual_theme = Q11_OTHER_TEXT_THEME_MAP.get(normalized_other, residual_reason)
+                residual_counter[residual_theme] += 1
+                residual_theme_texts.setdefault(residual_theme, set()).add(residual_reason)
+            mapping_rows.append({
+                "survey_id": row.survey_id,
+                "employment_status": row.q8_employment_status,
+                "original_q11_codes": " | ".join(base_codes),
+                "q11_other_text": other_text,
+                "q11a_quit_reasons": row.q11a_quit_reasons,
+                "mapped_existing_reason": (
+                    Q11_LABEL_MAP.get(mapped_parent_code, "") if mapped_parent_code and not mapped_quit_code
+                    else Q11A_LABEL_MAP.get(mapped_quit_code, "")
+                ),
+                "final_q11_codes": " | ".join(final_codes),
+                "final_q11a_quit_reasons": " | ".join(final_quit_codes),
+                "left_under_other": "Yes" if not has_mapping else "No",
+                "residual_other_reason": residual_reason,
+                "residual_other_theme": residual_theme,
+            })
 
     rows = []
 
-    # Quit first, followed immediately by its Q11a sub-reasons (matches prior report format)
-    quit_n = counter.get("quit", 0)
-    rows.append({
-        "Reason": Q11_LABEL_MAP.get("quit", "Quit"),
-        "Total Youth": quit_n,
-        "Percent Who Left a Job": pct_str(quit_n, total_left),
-        "Source": "Q11",
-    })
+    order = list(Q11_LABEL_MAP.keys()) + [k for k in counter if k not in Q11_LABEL_MAP]
+    parent_rows = []
+    for code in order:
+        n = counter.get(code, 0)
+        if n >= 2:
+            parent_rows.append({
+                "Reason": Q11_LABEL_MAP.get(code, code),
+                "Total Youth": n,
+                pct_col: pct_str(n, total_left),
+            })
+
+    parent_rows.sort(key=lambda r: (-r["Total Youth"], r["Reason"]))
+
     quit_rows = []
     order_a = list(Q11A_LABEL_MAP.keys()) + [k for k in quit_counter if k not in Q11A_LABEL_MAP]
     for code in order_a:
         n = quit_counter.get(code, 0)
-        if n > 0:
+        if n >= 2:
             quit_rows.append({
-                "Reason": "  " + Q11A_LABEL_MAP.get(code, code),
+                "Reason": "    " + Q11A_LABEL_MAP.get(code, code),
                 "Total Youth": n,
-                "Percent Who Left a Job": pct_str(n, total_left),
-                "Source": "Q11a",
+                pct_col: pct_str(n, total_left),
             })
-    quit_rows.sort(key=lambda r: -r["Total Youth"])
-    rows.extend(quit_rows)
+    quit_rows.sort(key=lambda r: (-r["Total Youth"], r["Reason"].strip()))
 
-    # Remaining Q11 reasons (everything except quit), sorted by count
-    other_rows = []
-    order = [k for k in Q11_LABEL_MAP if k != "quit"] + [
-        k for k in counter if k not in Q11_LABEL_MAP and k != "quit"
-    ]
-    for code in order:
-        n = counter.get(code, 0)
-        if n > 0:
-            other_rows.append({
-                "Reason": Q11_LABEL_MAP.get(code, code),
-                "Total Youth": n,
-                "Percent Who Left a Job": pct_str(n, total_left),
-                "Source": "Q11",
-            })
-    other_rows.sort(key=lambda r: -r["Total Youth"])
-    rows.extend(other_rows)
+    for row in parent_rows:
+        rows.append(row)
+        if row["Reason"] == Q11_LABEL_MAP.get("quit", "Quit"):
+            rows.extend(quit_rows)
 
-    return pd.DataFrame(rows)
+    mapping_df = pd.DataFrame(mapping_rows)
+    repeated_residual_df = pd.DataFrame([
+        {
+            "Residual other theme": reason,
+            "Total Youth": count,
+            "Source texts": " | ".join(sorted(residual_theme_texts.get(reason, set()))),
+        }
+        for reason, count in residual_counter.items() if count > 1
+    ])
+    if not repeated_residual_df.empty:
+        repeated_residual_df = repeated_residual_df.sort_values(
+            by=["Total Youth", "Residual other theme"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
+    return pd.DataFrame(rows), mapping_df, repeated_residual_df
+
+
+def sec13_left_job_reference(df):
+    summary_df, mapping_df, repeated_residual_df = build_sec13_left_job_outputs(df)
+    return {
+        "Updated Q11 left-job table": summary_df,
+        "Q11 other mapping audit": mapping_df,
+        "Repeated residual other reasons": repeated_residual_df,
+    }
 
 
 def sec14_transport(df):
@@ -765,10 +932,6 @@ def sec14_transport(df):
             "Percent": pct_str(n, total_t),
         })
     rows_c.sort(key=lambda r: -r["Total"])
-    no_car_n = sum(v for k, v in counter.items() if k in NO_CAR_SET)
-    if no_car_n > 0:
-        rows_c.append({"Primary Transport": "No-Car Combination (non-bus)",
-                       "Total": no_car_n, "Percent": pct_str(no_car_n, total_t)})
     rows_c.append({"Primary Transport": "Total", "Total": total_t, "Percent": "100%"})
     table_c = pd.DataFrame(rows_c)
 
@@ -820,11 +983,38 @@ def sec15_voter_reg(df):
     table_b = pd.DataFrame(rows_b)
 
     eligible = vdf[vdf["q7_registered_to_vote"].isin(["yes", "no"])].copy()
+    trans_tokens = {
+        "Non-binary", "Gender Nonconforming", "Transgender Male",
+        "Transgender Female", "Genderqueer", "Two-Spirit",
+    }
+    eligible["_gender_bucket"] = eligible["gender"].astype(str).apply(
+        lambda raw: (
+            "Trans, Non-binary" if any(token in trans_tokens for token in split_pipe(raw)) else (
+                "Female" if split_pipe(raw) == ["Female"] else (
+                    "Male" if split_pipe(raw) == ["Male"] else ""
+                )
+            )
+        )
+    )
+    lgbtq_values = {
+        "Asexual", "Bisexual", "Demisexual", "Gay or Lesbian",
+        "Same Gender Loving", "Mostly heterosexual", "Pansexual", "Queer",
+    }
+    eligible["_orient_bucket"] = eligible["sexual_orientation"].astype(str).apply(
+        lambda raw: (
+            "LGBTQ+" if any(token in lgbtq_values for token in split_pipe(raw)) else (
+                "Heterosexual/Straight" if split_pipe(raw) in (["Heterosexual/Straight"], ["Heterosexual"]) else ""
+            )
+        )
+    )
+
     gender_rows = []
-    for gender in ["Female", "Male"]:
-        subset = eligible[eligible["gender"].astype(str).str.strip() == gender]
+    for gender in ["Female", "Male", "Trans, Non-binary"]:
+        subset = eligible[eligible["_gender_bucket"] == gender]
         n_total_gender = len(subset)
         n_registered = int((subset["q7_registered_to_vote"] == "yes").sum())
+        if n_total_gender == 0:
+            continue
         gender_rows.append({
             "Gender": gender,
             "Registered": n_registered,
@@ -832,6 +1022,21 @@ def sec15_voter_reg(df):
             "Percent Registered": pct_str(n_registered, n_total_gender),
         })
     table_c = pd.DataFrame(gender_rows)
+
+    orientation_rows = []
+    for orient in ["Heterosexual/Straight", "LGBTQ+"]:
+        subset = eligible[eligible["_orient_bucket"] == orient]
+        n_total_orient = len(subset)
+        if n_total_orient == 0:
+            continue
+        n_registered = int((subset["q7_registered_to_vote"] == "yes").sum())
+        orientation_rows.append({
+            "Sexual Orientation": orient,
+            "Registered": n_registered,
+            "Total with Voting Response": n_total_orient,
+            "Percent Registered": pct_str(n_registered, n_total_orient),
+        })
+    table_e = pd.DataFrame(orientation_rows)
 
     reason_rows = eligible[eligible["q7a_not_registered_reasons"].str.strip() != ""].copy()
     dont_know_how_n = sum(
@@ -863,6 +1068,7 @@ def sec15_voter_reg(df):
         "Voter Registration by Age": table_a,
         "Not Registered Reasons by Age": table_b,
         "Registration by Gender (18-23)": table_c,
+        "Registration by Sexual Orientation (18-23)": table_e,
         "Voting Narrative Support": table_d,
     }
 
@@ -1240,7 +1446,9 @@ SECTIONS = [
     ("10_employment",     "10. Employment Status (Q8 x Age)",            sec10_employment),
     ("11_job_tenure",     "11. Job Tenure (Q8a x Full/Part-time)",       sec11_job_tenure),
     ("12_job_barriers",   "12. Job Barriers (Q10)",                      sec12_job_barriers),
+    ("12_job_barriers_ref", "12A. Job Barriers Mapping Reference",       sec12_job_barriers_reference),
     ("13_left_job",       "13. Reasons Left Job (Q11 + Q11a)",           sec13_left_job),
+    ("13_left_job_ref",   "13A. Left Job Mapping Reference",             sec13_left_job_reference),
     ("14_transport",      "14. Transportation (Q6 + Q6a + Q9)",          sec14_transport),
     ("15_voter_reg",      "15. Voter Registration (Q7 + Q7a)",           sec15_voter_reg),
     ("16_visit",          "16. Visit Frequency + Reasons + Barriers",    sec16_visit),
@@ -1467,23 +1675,27 @@ def generate_charts():
     age_groups_e2  = [a for a in age_groups_e if sum(e_data[a].values()) > 0]
     age_display_e2 = [age_display_e[age_groups_e.index(a)] for a in age_groups_e2]
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    fig, ax = plt.subplots(figsize=(8, 4.0))
     lefts = np.zeros(len(age_groups_e2))
+    y_positions = np.arange(len(age_groups_e2)) * 0.52
+    EMP_CHART_COLORS = ANALYTICAL_PALETTE
     for ci, code in enumerate(EMP_CHART_ORDER):
         seg_counts = np.array([e_data[a][code] for a in age_groups_e2], dtype=float)
         row_totals = np.array([sum(e_data[a].values()) for a in age_groups_e2], dtype=float)
         seg_pcts   = np.where(row_totals > 0, 100 * seg_counts / row_totals, 0)
-        bars = ax.barh(range(len(age_groups_e2)), seg_pcts, left=lefts,
-                       color=PALETTE[ci % len(PALETTE)], label=EMP_CHART_MAP[code], zorder=3)
+        bars = ax.barh(y_positions, seg_pcts, left=lefts,
+                       color=EMP_CHART_COLORS[ci], label=EMP_CHART_MAP[code], zorder=3, height=0.4)
         for i, (bar, pval) in enumerate(zip(bars, seg_pcts)):
             if pval >= 8:
                 ax.text(lefts[i] + pval / 2, bar.get_y() + bar.get_height() / 2,
                         f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color="white")
         lefts += seg_pcts
-    ax.set_yticks(range(len(age_groups_e2)))
+    ax.set_yticks(y_positions)
     ax.set_yticklabels(age_display_e2, fontsize=10)
     ax.set_xlim(0, 100)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+    ax.invert_yaxis()
+    ax.set_title("Employment Status by Age", fontsize=11, pad=10)
     _apply_hbar_style(ax)
     ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
     _save(fig, "chart_03_employment_by_age.png")

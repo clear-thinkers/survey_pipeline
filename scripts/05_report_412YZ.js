@@ -238,6 +238,7 @@ function makeStyledTableCell(text, {
   shading,
   columnSpan,
   align,
+  indentLeft = 0,
   size = 22,
 } = {}) {
   return new TableCell({
@@ -252,6 +253,7 @@ function makeStyledTableCell(text, {
     children: [
       new Paragraph({
         alignment: align,
+        indent: indentLeft ? { left: indentLeft } : undefined,
         children: [
           new TextRun({
             text: String(text ?? ""),
@@ -259,6 +261,7 @@ function makeStyledTableCell(text, {
             italic,
             font: "Calibri",
             size,
+            underline: { type: UnderlineType.NONE },
           }),
         ],
       }),
@@ -375,28 +378,16 @@ function makeTable(rows, totalLabel = "Total", captionText = "") {
 
     const cells = cols.map((col, colIdx) => {
       const cellText  = String(rowObj[col] ?? "");
+      const leadingWhitespace = colIdx === 0 ? (cellText.match(/^(\s+)/)?.[1].length ?? 0) : 0;
+      const displayText = colIdx === 0 ? cellText.replace(/^\s+/, "") : cellText;
       const cellWidth = fixedWidths
         ? { size: fixedWidths[colIdx] ?? 0, type: WidthType.DXA }
         : { size: 0, type: WidthType.AUTO };
-      return new TableCell({
+      return makeStyledTableCell(displayText, {
         width: cellWidth,
-        margins: { top: 80, bottom: 80, left: 120, right: 120 },
-        borders: NO_BORDER,
-        shading: shaded
-          ? { fill: HDR_FILL, type: ShadingType.CLEAR, color: "auto" }
-          : undefined,
-        children: [
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: cellText,
-                bold: shaded,
-                font: "Calibri",
-                size: 22,
-              }),
-            ],
-          }),
-        ],
+        shading: shaded ? HDR_FILL : undefined,
+        bold: shaded,
+        indentLeft: leadingWhitespace * 120,
       });
     });
 
@@ -410,6 +401,85 @@ function makeTable(rows, totalLabel = "Total", captionText = "") {
   return new Table({
     width: tblWidth,
     layout: fixedWidths ? TableLayoutType.FIXED : TableLayoutType.AUTOFIT,
+    borders: {
+      top:     { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      bottom:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      left:    { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      right:   { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideH: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideV: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+    },
+    rows: tableRows,
+  });
+}
+
+function makeGroupedEducationTable(rows, captionText = "") {
+  if (!rows || rows.length === 0) return new Paragraph({ text: "" });
+
+  const cols = Object.keys(rows[0]).filter((k) => k !== "_header");
+  const fixedWidths = captionText && TABLE_WIDTHS[captionText]
+    ? TABLE_WIDTHS[captionText]
+    : [1080, 5280, 1200, 1800];
+  const groupFill = "EEF3F8";
+
+  const renderRow = (rowObj, { shading, bold = false, indentLevel = false } = {}) => new TableRow({
+    children: cols.map((col, colIdx) => makeStyledTableCell(rowObj[col] ?? "", {
+      width: { size: fixedWidths[colIdx] ?? 0, type: WidthType.DXA },
+      shading,
+      bold,
+      align: colIdx >= 2 ? AlignmentType.CENTER : undefined,
+      indentLeft: indentLevel && col === "Level" ? 240 : 0,
+    })),
+  });
+
+  const headerRow = new TableRow({
+    children: cols.map((col, colIdx) => makeStyledTableCell(col, {
+      width: { size: fixedWidths[colIdx] ?? 0, type: WidthType.DXA },
+      bold: true,
+      shading: HDR_FILL,
+      align: colIdx >= 2 ? AlignmentType.CENTER : undefined,
+    })),
+  });
+
+  const tableRows = [headerRow];
+  let currentGroup = null;
+
+  for (const rowObj of rows.filter((row) => !row._header)) {
+    const groupLabel = String(rowObj.Group ?? "").trim();
+    const levelLabel = String(rowObj.Level ?? "").trim();
+    const isGrandTotal = groupLabel === "Total";
+    const isSubtotal = !isGrandTotal && /^Total\s+/i.test(levelLabel);
+
+    if (!isGrandTotal && groupLabel && groupLabel !== currentGroup) {
+      tableRows.push(new TableRow({
+        children: [makeStyledTableCell(groupLabel, {
+          width: { size: fixedWidths.reduce((sum, value) => sum + value, 0), type: WidthType.DXA },
+          bold: true,
+          shading: groupFill,
+          columnSpan: cols.length,
+        })],
+      }));
+      currentGroup = groupLabel;
+    }
+
+    if (isGrandTotal) {
+      tableRows.push(renderRow(rowObj, { shading: HDR_FILL, bold: true }));
+      continue;
+    }
+
+    tableRows.push(renderRow({
+      ...rowObj,
+      Group: "",
+    }, {
+      shading: isSubtotal ? groupFill : undefined,
+      bold: isSubtotal,
+      indentLevel: !isSubtotal,
+    }));
+  }
+
+  return new Table({
+    width: { size: fixedWidths.reduce((sum, value) => sum + value, 0), type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
     borders: {
       top:     { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
       bottom:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
@@ -940,41 +1010,64 @@ async function sec_education_employment(dfCsv) {
   const notSUnempSk= notSUnemp.filter((r) => r.q8b_job_seeking === "yes").length;
   const nisuRows   = dfCsv.filter((r) => r.q5_school_status === "not_in_school" && r.q8_employment_status === "no");
   const noDiploma  = nisuRows.filter((r) => r.q5a_highest_education === "some_hs").length;
-  const empRows    = dfCsv.filter((r) => ["yes_full_time","yes_part_time"].includes(r.q8_employment_status));
-  const empAlsoSch = empRows.filter((r) => ["high_school","college_career","ged","graduate"].includes(r.q5_school_status)).length;
 
   const rows09 = loadSheet("09_education");
+  const data09 = rows09.filter((r) => !r._header);
+  const notInSchoolTotalRow = data09.find((r) => firstCol(r) === "Not in School" && String(r.Level ?? "").trim() === "Total Not in School");
+  const hsDiplomaRow = data09.find((r) => String(r.Level ?? "").trim() === "HS Diploma or GED");
+  const someCollegeRow = data09.find((r) => String(r.Level ?? "").trim() === "Some College");
+  const degreeRow = data09.find((r) => String(r.Level ?? "").trim() === "College Degree or Certificate");
+  const notInSchoolTotal = notInSchoolTotalRow ? (parseInt(notInSchoolTotalRow.Count) || 0) : 0;
+  const graduateRow = data09.find((r) => String(r.Level ?? "").trim() === "Graduate School");
+  const collegeVocationalRow = data09.find((r) => String(r.Level ?? "").trim() === "College/Vocational");
+  const gedProgramRow = data09.find((r) => String(r.Level ?? "").trim() === "GED Program");
+  const highSchoolRow = data09.find((r) => String(r.Level ?? "").trim() === "High School");
+  const totalEducationRow = data09.find((r) => firstCol(r) === "Total");
+  const highSchoolCount = highSchoolRow ? (parseInt(highSchoolRow.Count) || 0) : 0;
+  const educationTotal = totalEducationRow ? (parseInt(totalEducationRow.Count) || 0) : total;
+  const hsDiplomaOrGed = (graduateRow ? (parseInt(graduateRow.Count) || 0) : 0) +
+    (collegeVocationalRow ? (parseInt(collegeVocationalRow.Count) || 0) : 0) +
+    (hsDiplomaRow ? (parseInt(hsDiplomaRow.Count) || 0) : 0) +
+    (someCollegeRow ? (parseInt(someCollegeRow.Count) || 0) : 0) +
+    (degreeRow ? (parseInt(degreeRow.Count) || 0) : 0);
+  const higherEdOrDegree = (graduateRow ? (parseInt(graduateRow.Count) || 0) : 0) +
+    (collegeVocationalRow ? (parseInt(collegeVocationalRow.Count) || 0) : 0) +
+    (degreeRow ? (parseInt(degreeRow.Count) || 0) : 0);
   const cap = "Educational Enrollment and Attainment";
   const items = [
     makeHeading("Employment and Education", 1),
     makePara(
-      "Youth were asked to report on whether they are attending school, working, and, if not working, trying to find a job. This year:"
+      "Youth were asked whether they are attending school, working, or looking for work."
     ),
-    makeBullet(`${pct(inSchool, total)} of all respondents reported being enrolled in school, down from 53% in March 2025`),
     makeBullet(
-      `${pct(employed, nQ8Total)} of all respondents reported being employed ` +
-      `(${pct(empAlsoSch, employed)} of these youth are also enrolled in school)`
+      `This year, enrollment and employment rates were nearly equal — ${pct(inSchool, total)} enrolled in school, ` +
+      `${pct(employed, nQ8Total)} employed — compared to 53% enrolled and 44% employed in March 2025.`
+    ),
+    makeBullet(
+      `Among youth who are neither in school nor employed (${pct(nisuRows.length, total)} of all respondents, down from 26% last year), ` +
+      `job-seeking rates were high: ${pct(notSUnempSk, notSUnemp.length)} reported actively looking for work, up significantly from 68% last year. ` +
+      `${noDiploma} of these ${nisuRows.length} youth had not completed high school or a GED.`
     ),
   ];
   if (inSUnemp.length) items.push(makeBullet(
-    `${pct(inSUnempSk, inSUnemp.length)} of respondents who are in school and unemployed are looking for a job, down from 78% in March 2025`
-  ));
-  if (notSUnemp.length) items.push(makeBullet(
-    `${pct(notSUnempSk, notSUnemp.length)} of respondents who are not in school and unemployed are looking for a job, up from 68% in March 2025`
-  ));
-  items.push(makeBullet(
-    `${pct(nisuRows.length, total)} of respondents are both not in school and unemployed, down from 26% last year; ` +
-    `${noDiploma} of these ${nisuRows.length} youth report not completing high school or a GED. ` +
-    `Most of this group (${pct(notSUnempSk, notSUnemp.length)}) reported looking for work.`
+    `Job-seeking was also common among youth in school but not working: ${pct(inSUnempSk, inSUnemp.length)} reported looking for a job, ` +
+    `down slightly from 78% last year.`
   ));
   items.push(makePara(
     "Among youth who reported being enrolled in school, respondents were split almost evenly between high school students (45%) and youth in college, vocational, or graduate programs (51% combined), while 4% reported being enrolled in a GED program. " +
     "This is a notable change from March 2025, when about two-thirds of enrolled youth were in high school, suggesting this year’s in-school respondents were more evenly distributed across secondary and postsecondary education."
   ));
-  items.push(await embedChart("chart_09_employment_by_school.png", 6.6));
+  if (notInSchoolTotal) items.push(makePara(
+    `When excluding the ${highSchoolCount} youth enrolled in high school, ` +
+    `${pct(hsDiplomaOrGed, educationTotal - highSchoolCount)} of respondents have their high school diploma or GED, up from 85% in March 2025. ` +
+    `${pct(higherEdOrDegree, educationTotal)} of respondents are currently enrolled in higher education or have already received a college degree or certificate, up notably from 18% last year — driven largely by a higher share of enrolled respondents being in college or vocational programs this year compared to last.`
+  ));
   items.push(makeCaption(cap));
-  items.push(makeTable(rows09, "Total", cap));
-  items.push(makePara(""));
+  items.push(makeGroupedEducationTable(rows09, cap));
+  const educationChartPath = path.join(CHARTS_DIR, "chart_09_employment_by_school.png");
+  if (fs.existsSync(educationChartPath)) {
+    items.push(await embedChart("chart_09_employment_by_school.png", 6.6));
+  }
   return items;
 }
 
@@ -1026,21 +1119,30 @@ async function sec_employment_by_age() {
   ];
 }
 
-function sec_job_barriers() {
+function sec_job_barriers(dfCsv) {
   const rows12  = loadSheet("12_job_barriers");
   const data12  = rows12.filter((r) => !r._header);
   const cols12  = Object.keys(rows12[0] || {}).filter((k) => k !== "_header");
   const topRow  = data12[0];
   const secondRow = data12[1];
   const thirdRow = data12[2];
-  const fourthRow = data12[3];
   const topLabel = topRow ? firstCol(topRow).toLowerCase() : "";
   const topPct   = (topRow && cols12.length > 2) ? getCol(topRow, 2) : "";
   const secondLabel = secondRow ? firstCol(secondRow).toLowerCase() : "";
   const secondPct = (secondRow && cols12.length > 2) ? getCol(secondRow, 2) : "";
   const thirdLabel = thirdRow ? firstCol(thirdRow).toLowerCase() : "";
   const thirdPct = (thirdRow && cols12.length > 2) ? getCol(thirdRow, 2) : "";
-  const fourthPct = (fourthRow && cols12.length > 2) ? getCol(fourthRow, 2) : "";
+  const mentalRow = data12.find((row) => firstCol(row).trim() === "Mental or physical health");
+  const mentalPct = (mentalRow && cols12.length > 2) ? getCol(mentalRow, 2) : "";
+  const mentalHealthRows = dfCsv.filter((row) =>
+    String(row.q10_job_barriers || "").split("|").map((part) => part.trim()).includes("mental_physical_health")
+  );
+  const mentalHealth18to23 = mentalHealthRows.filter((row) => ["18_20", "21_23"].includes(String(row.age_range || "").trim())).length;
+  const mentalHealthSentence = !mentalPct || mentalHealthRows.length === 0
+    ? ""
+    : mentalHealth18to23 === mentalHealthRows.length
+      ? ` Mental or physical health was cited by ${mentalPct}, and all of those responses came from youth ages 18 to 23.`
+      : ` Mental or physical health was cited by ${mentalPct}; ${mentalHealth18to23} of the ${mentalHealthRows.length} youth reporting that barrier were ages 18 to 23.`;
   const cap = "Reasons Youth Have Trouble Finding Jobs (Reasons Given by 2 or More People)";
   return [
     makePara(
@@ -1049,8 +1151,9 @@ function sec_job_barriers() {
       "Youth were offered a multiple-choice list of reasons and could also add their own responses."
     ),
     makePara(
-      `The most common challenge identified this year, reported by ${topPct} of youth, was ${topLabel}, followed closely by ${secondLabel} (${secondPct}) and ${thirdLabel} (${thirdPct}). ` +
-      `This represents a clear shift from March 2025, when transportation issues were the leading barrier at 32% and applying without getting called back was reported by 28% of youth. Mental or physical health remained a substantial barrier for ${fourthPct} of youth, and nearly all of those reporting that challenge were age 18 or older.`
+      `The most common challenge identified this year, reported by ${topPct} of youth who described at least one job barrier, was ${topLabel}, followed closely by ${secondLabel} (${secondPct}) and ${thirdLabel} (${thirdPct}). ` +
+      `Both transportation issues and applying and not getting called were reported more often than in March 2025, when those barriers stood at 32% and 28%, respectively.` +
+      mentalHealthSentence
     ),
     makeCaption(cap),
     makeTable(rows12, "__none__", cap),
@@ -1061,6 +1164,15 @@ function sec_job_barriers() {
 
 function sec_left_job() {
   const rows13 = loadSheet("13_left_job");
+  const data13 = rows13.filter((r) => !r._header);
+  const cols13 = Object.keys(rows13[0] || {}).filter((k) => k !== "_header");
+  const findRow = (label) => data13.find((r) => firstCol(r).trim() === label);
+  const foundBetterPct = getCol(findRow("Found a better job") || {}, 2) || "";
+  const quitPct = getCol(findRow("Quit") || {}, 2) || "";
+  const seasonalPct = getCol(findRow("Seasonal/temporary") || {}, 2) || "";
+  const lowPayPct = getCol(findRow("Low pay or not enough hours") || {}, 2) || getCol(findRow("    Low pay or not enough hours") || {}, 2) || "";
+  const mentalHealthPct = getCol(findRow("Mental/emotional health") || {}, 2) || getCol(findRow("    Mental/emotional health") || {}, 2) || "";
+  const personalFamilyPct = getCol(findRow("Personal or family reasons") || {}, 2) || getCol(findRow("    Personal or family reasons") || {}, 2) || "";
   const cap = "Reasons Youth Lost or Quit a Job in the Past Year (Reasons Given by 2 or More People)";
   return [
     makePara(
@@ -1068,13 +1180,114 @@ function sec_left_job() {
       "to share the reason(s)."
     ),
     makePara(
-      "This year, the most common reason youth reported leaving a job was finding a better job, cited by 33% of youth who reported at least one reason for leaving. Twenty-eight percent reported quitting, and 26% said the job was seasonal or temporary. Among the youth who quit, the most common specific reasons were low pay or not enough hours and mental or emotional health, each reported by 8% of youth who left a job; personal or family reasons followed closely at 7%."
-    ),
-    makePara(
-      "Unlike the prior year, quitting was not the dominant reason for job separation in this year’s data. Youth ages 18 to 20 and 21 to 23 both accounted for most reports of leaving a job, but no single age group clearly dominated the overall pattern of job separation. Sub-reasons for youth who quit are shown indented below the Quit row."
+      `This year, finding a better job and quitting were tied as the most common reasons youth reported leaving a job, each cited by ${foundBetterPct} of youth who reported at least one reason for leaving. ${seasonalPct} said the job was seasonal or temporary. Among the youth who quit, the most common specific reasons were low pay or not enough hours (${lowPayPct}) and mental or emotional health (${mentalHealthPct}), followed by personal or family reasons (${personalFamilyPct}).`
     ),
     makeCaption(cap),
     makeTable(rows13, "__none__", cap),
+    makePara(""),
+  ];
+}
+
+function sec_employment_equity() {
+  const dfCsv = loadCsv();
+  const splitTokens = (value) => String(value || "").split("|").map((part) => part.trim()).filter(Boolean);
+  const transTokens = new Set(["Non-binary", "Gender Nonconforming", "Transgender Male", "Transgender Female", "Genderqueer", "Two-Spirit"]);
+  const lgbtqTokens = new Set(["Asexual", "Bisexual", "Demisexual", "Gay or Lesbian", "Same Gender Loving", "Mostly heterosexual", "Pansexual", "Queer"]);
+  const tokenToRaceGroup = (token) => {
+    const t = String(token || "").trim();
+    if (t.includes("Black")) return "Black";
+    if (t.includes("White")) return "White";
+    if (t.includes("Multi")) return "Multiracial";
+    if (t.includes("Hispanic") || t.includes("Latinx")) return "Hispanic or Latinx";
+    if (t.includes("Asian")) return "Asian";
+    if (t.includes("Native")) return "Native American or Native Hawaiian";
+    if (t.includes("Prefer not")) return "Prefer not to answer";
+    return "Other";
+  };
+  const genderBucket = (raw) => {
+    const tokens = splitTokens(raw);
+    if (tokens.some((token) => transTokens.has(token))) return "Trans/Non-binary/GNC";
+    if (tokens.length === 1 && tokens[0] === "Female") return "Female";
+    if (tokens.length === 1 && tokens[0] === "Male") return "Male";
+    return "";
+  };
+  const raceBucket = (raw) => {
+    const tokens = splitTokens(raw);
+    if (!tokens.length) return "";
+    if (tokens.length >= 2) return "Multiracial";
+    return tokenToRaceGroup(tokens[0]);
+  };
+  const orientBucket = (raw) => {
+    const tokens = splitTokens(raw);
+    if (!tokens.length) return "";
+    if (tokens.some((token) => lgbtqTokens.has(token))) return "LGBTQ+";
+    if (tokens.length === 1 && (tokens[0] === "Heterosexual/Straight" || tokens[0] === "Heterosexual")) return "Heterosexual/Straight";
+    return "";
+  };
+  const hasBarrier = (row) => String(row.q10_job_barriers || "").trim() !== "";
+  const leftJob = (row) => String(row.q11_left_job_reasons || "").trim() !== "";
+  const hasMentalBarrier = (row) => splitTokens(row.q10_job_barriers).includes("mental_physical_health");
+  const buildSummary = (rows) => ({
+    n: rows.length,
+    barrierPct: pct(rows.filter(hasBarrier).length, rows.length),
+    leftPct: pct(rows.filter(leftJob).length, rows.length),
+    mentalPct: pct(rows.filter(hasMentalBarrier).length, rows.length),
+  });
+  const overall = buildSummary(dfCsv);
+  const groups = {
+    gender: [
+      ["Female", dfCsv.filter((row) => genderBucket(row.gender) === "Female")],
+      ["Male", dfCsv.filter((row) => genderBucket(row.gender) === "Male")],
+      ["Trans/Non-binary/GNC", dfCsv.filter((row) => genderBucket(row.gender) === "Trans/Non-binary/GNC")],
+    ],
+    race: [
+      ["Black", dfCsv.filter((row) => raceBucket(row.race_ethnicity) === "Black")],
+      ["White", dfCsv.filter((row) => raceBucket(row.race_ethnicity) === "White")],
+      ["Multiracial", dfCsv.filter((row) => raceBucket(row.race_ethnicity) === "Multiracial")],
+    ],
+    orientation: [
+      ["Heterosexual/Straight", dfCsv.filter((row) => orientBucket(row.sexual_orientation) === "Heterosexual/Straight")],
+      ["LGBTQ+", dfCsv.filter((row) => orientBucket(row.sexual_orientation) === "LGBTQ+")],
+    ],
+  };
+  const genderSummaries = Object.fromEntries(groups.gender.map(([label, rows]) => [label, buildSummary(rows)]));
+  const raceSummaries = Object.fromEntries(groups.race.map(([label, rows]) => [label, buildSummary(rows)]));
+  const orientSummaries = Object.fromEntries(groups.orientation.map(([label, rows]) => [label, buildSummary(rows)]));
+  const cap = "Job Barriers and Job Loss by Demographic Group";
+  const equityRows = [
+    { _header: true,  "Demographic Group": "Demographic Group",    "N": "N",   "Q10 Had Barrier (%)": "Q10 Had Barrier (%)", "Q11 Left Job (%)": "Q11 Left Job (%)" },
+    {                 "Demographic Group": "Overall",              "N": String(overall.n), "Q10 Had Barrier (%)": overall.barrierPct, "Q11 Left Job (%)": overall.leftPct },
+    { _header: true,  "Demographic Group": "Gender",               "N": "",    "Q10 Had Barrier (%)": "",                    "Q11 Left Job (%)": "" },
+    {                 "Demographic Group": "Female",               "N": String(genderSummaries["Female"].n),  "Q10 Had Barrier (%)": genderSummaries["Female"].barrierPct,                 "Q11 Left Job (%)": genderSummaries["Female"].leftPct },
+    {                 "Demographic Group": "Male",                 "N": String(genderSummaries["Male"].n),  "Q10 Had Barrier (%)": genderSummaries["Male"].barrierPct,                 "Q11 Left Job (%)": genderSummaries["Male"].leftPct },
+    {                 "Demographic Group": "Trans/Non-binary/GNC", "N": String(genderSummaries["Trans/Non-binary/GNC"].n),  "Q10 Had Barrier (%)": genderSummaries["Trans/Non-binary/GNC"].barrierPct,                 "Q11 Left Job (%)": genderSummaries["Trans/Non-binary/GNC"].leftPct },
+    { _header: true,  "Demographic Group": "Race/Ethnicity",       "N": "",    "Q10 Had Barrier (%)": "",                    "Q11 Left Job (%)": "" },
+    {                 "Demographic Group": "Black",                "N": String(raceSummaries["Black"].n),  "Q10 Had Barrier (%)": raceSummaries["Black"].barrierPct,                 "Q11 Left Job (%)": raceSummaries["Black"].leftPct },
+    {                 "Demographic Group": "White",                "N": String(raceSummaries["White"].n),  "Q10 Had Barrier (%)": raceSummaries["White"].barrierPct,                 "Q11 Left Job (%)": raceSummaries["White"].leftPct },
+    {                 "Demographic Group": "Multiracial",          "N": String(raceSummaries["Multiracial"].n),  "Q10 Had Barrier (%)": raceSummaries["Multiracial"].barrierPct,                 "Q11 Left Job (%)": raceSummaries["Multiracial"].leftPct },
+    { _header: true,  "Demographic Group": "Sexual Orientation",   "N": "",    "Q10 Had Barrier (%)": "",                    "Q11 Left Job (%)": "" },
+    {                 "Demographic Group": "Heterosexual/Straight", "N": String(orientSummaries["Heterosexual/Straight"].n), "Q10 Had Barrier (%)": orientSummaries["Heterosexual/Straight"].barrierPct,                 "Q11 Left Job (%)": orientSummaries["Heterosexual/Straight"].leftPct },
+    {                 "Demographic Group": "LGBTQ+",               "N": String(orientSummaries["LGBTQ+"].n),  "Q10 Had Barrier (%)": orientSummaries["LGBTQ+"].barrierPct,                 "Q11 Left Job (%)": orientSummaries["LGBTQ+"].leftPct },
+  ];
+  return [
+    makeHeading("Employment Barriers and Job Loss by Demographic Group", 2),
+    makePara(
+      "Examining job barriers and job loss by gender, race/ethnicity, and sexual orientation reveals that overall rates are broadly consistent across groups, though one specific barrier shows wider variation. " +
+      `Because group sizes vary considerably, rates for smaller groups \u2014 particularly Trans/Non-binary/GNC respondents (n=${genderSummaries["Trans/Non-binary/GNC"].n}) \u2014 should be interpreted with caution.`
+    ),
+    makePara(
+      `The share of youth reporting any job barrier ranged from ${genderSummaries["Male"].barrierPct} to ${genderSummaries["Trans/Non-binary/GNC"].barrierPct} across the demographic groups shown, with no group standing out for overall barrier prevalence. ` +
+      `Rates of leaving a job were somewhat elevated for Black respondents (${raceSummaries["Black"].leftPct}) and LGBTQ+ respondents (${orientSummaries["LGBTQ+"].leftPct}) compared to the overall rate of ${overall.leftPct}. ` +
+      `The clearest disparity was in mental or physical health cited as a barrier: reported by ${genderSummaries["Trans/Non-binary/GNC"].mentalPct} of Trans/Non-binary/GNC youth and ${raceSummaries["White"].mentalPct} of White youth, ` +
+      `compared to ${raceSummaries["Black"].mentalPct} of Black youth and ${genderSummaries["Male"].mentalPct} of male youth. Full per-barrier and per-reason breakouts by demographic group are available in the analysis workbook (sheets q10_barriers_equity and q11_reasons_equity).`
+    ),
+    makeCaption(cap),
+    makeTable(equityRows, "Overall", cap),
+    makePara(
+      "Note: Percentages are shares of each demographic group. Race uses a counted-once approach (respondents identifying with two or more groups are counted as Multiracial). " +
+      `Respondents who did not report gender, race, or orientation are excluded from their respective group comparisons. Trans/Non-binary/GNC n=${genderSummaries["Trans/Non-binary/GNC"].n}; interpret rates for this group with caution.`,
+      { italic: true }
+    ),
     makePara(""),
   ];
 }
@@ -1123,6 +1336,8 @@ function sec_voter_reg(dfCsv) {
   const subs      = splitSheet("15_voter_reg");
   const dfReg     = subs["Voter Registration by Age"]       || [];
   const dfReasons = subs["Not Registered Reasons by Age"]   || [];
+  const dfGender  = subs["Registration by Gender (18-23)"]  || [];
+  const dfOrient  = subs["Registration by Sexual Orientation (18-23)"] || [];
   let totalPctReg = "[PLACEHOLDER]";
   let pct18to20   = "[PLACEHOLDER]";
   let pct21to23   = "[PLACEHOLDER]";
@@ -1132,21 +1347,25 @@ function sec_voter_reg(dfCsv) {
   if (regRow && regRow["18-20 years old"]) pct18to20 = regRow["18-20 years old"];
   if (regRow && regRow["21-23 years old"]) pct21to23 = regRow["21-23 years old"];
 
+  const genderData = dfGender.filter((r) => !r._header);
+  const femaleRow = genderData.find((r) => firstCol(r) === "Female");
+  const maleRow = genderData.find((r) => firstCol(r) === "Male");
+  const transRow = genderData.find((r) => firstCol(r) === "Trans, Non-binary");
+  const pctFemaleReg = femaleRow ? (femaleRow["Percent Registered"] || "[PLACEHOLDER]") : "[PLACEHOLDER]";
+  const pctMaleReg = maleRow ? (maleRow["Percent Registered"] || "[PLACEHOLDER]") : "[PLACEHOLDER]";
+  const pctTransReg = transRow ? (transRow["Percent Registered"] || "[PLACEHOLDER]") : "[PLACEHOLDER]";
+
+  const orientData = dfOrient.filter((r) => !r._header);
+  const heteroRow = orientData.find((r) => firstCol(r) === "Heterosexual/Straight");
+  const lgbtqRow = orientData.find((r) => firstCol(r) === "LGBTQ+");
+  const pctHeteroReg = heteroRow ? (heteroRow["Percent Registered"] || "[PLACEHOLDER]") : "[PLACEHOLDER]";
+  const pctLgbtqReg = lgbtqRow ? (lgbtqRow["Percent Registered"] || "[PLACEHOLDER]") : "[PLACEHOLDER]";
+
   const eligibleRows = dfCsv.filter((row) => {
     const age = String(row.age_range || "").trim();
     const reg = String(row.q7_registered_to_vote || "").trim();
     return ["18_20", "21_23"].includes(age) && ["yes", "no"].includes(reg);
   });
-  const femaleRows = eligibleRows.filter((row) => String(row.gender || "").trim() === "Female");
-  const maleRows   = eligibleRows.filter((row) => String(row.gender || "").trim() === "Male");
-  const pctFemaleReg = pct(
-    femaleRows.filter((row) => row.q7_registered_to_vote === "yes").length,
-    femaleRows.length,
-  ) || "[PLACEHOLDER]";
-  const pctMaleReg = pct(
-    maleRows.filter((row) => row.q7_registered_to_vote === "yes").length,
-    maleRows.length,
-  ) || "[PLACEHOLDER]";
   const reasonRows = eligibleRows.filter((row) => String(row.q7a_not_registered_reasons || "").trim() !== "");
   const dontKnowHowCount = reasonRows.filter((row) =>
     String(row.q7a_not_registered_reasons || "").split("|").map((part) => part.trim()).includes("dont_know_how")
@@ -1165,7 +1384,7 @@ function sec_voter_reg(dfCsv) {
       `${totalPctReg} of eligible respondents reported being registered, down from 67% in March 2025.`
     ),
     makePara(
-      `Older youth were more likely to be registered than youth ages 18 to 20 (${pct21to23} of 21- to 23-year-olds, compared with ${pct18to20} of 18- to 20-year-olds), and females reported higher registration rates than males (${pctFemaleReg} and ${pctMaleReg}, respectively).`
+      `Older youth were more likely to be registered than youth ages 18 to 20 (${pct21to23} of 21- to 23-year-olds, compared with ${pct18to20} of 18- to 20-year-olds). Registration rates also varied by gender, with ${pctFemaleReg} of female youth registered compared with ${pctMaleReg} of male youth and ${pctTransReg} of transgender and non-binary youth. By sexual orientation, registration rates were similar at ${pctLgbtqReg} for LGBTQ+ youth and ${pctHeteroReg} for heterosexual youth.`
     ),
     makeCaption(cap1),
     makeTable(dfReg, "__none__", cap1),
@@ -1520,8 +1739,9 @@ async function main() {
     ...(await sec_education_employment(dfCsv)),
     ...sec_job_tenure(dfCsv),
     ...(await sec_employment_by_age()),
-    ...sec_job_barriers(),
+    ...sec_job_barriers(dfCsv),
     ...sec_left_job(),
+    ...sec_employment_equity(),
     ...sec_transportation(),
     ...sec_voter_reg(dfCsv),
     ...(await sec_zone_visit()),
