@@ -1102,7 +1102,7 @@ SECTIONS = [
 
 
 def generate_charts():
-    """Generate 6 chart PNGs from analysis_412YZ.xlsx into output/412YZ/charts/."""
+    """Generate chart PNGs from analysis_412YZ.xlsx into output/412YZ/charts/."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -1171,6 +1171,8 @@ def generate_charts():
         vals1.append(pct_val)
 
     if labels1:
+        labels1 = labels1[::-1]
+        vals1   = vals1[::-1]
         fig, ax = plt.subplots(figsize=(8, 3.5))
         y_pos = range(len(labels1))
         bars = ax.barh(list(y_pos), vals1, color=PALETTE[0], zorder=3)
@@ -1230,6 +1232,8 @@ def generate_charts():
     ax.set_yticklabels(age_display_h2, fontsize=10)
     ax.set_xlim(0, 100)
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+    ax.invert_yaxis()
+    ax.set_title("Current Housing Status by Age", fontsize=11, pad=10)
     _apply_hbar_style(ax)
     ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
     _save(fig, "chart_02_housing_stability.png")
@@ -1277,6 +1281,83 @@ def generate_charts():
     _apply_hbar_style(ax)
     ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
     _save(fig, "chart_03_employment_by_age.png")
+
+    # ------------------------------------------------------------------
+    # Chart 3b: Employment by Self-Reported School Enrollment
+    # Match prior-year category order and legend order.
+    # ------------------------------------------------------------------
+    SCHOOL_EMPLOYMENT_LABELS = {
+        "not_in_school":   "Not in school",
+        "high_school":     "High school",
+        "ged":             "GED program",
+        "college_career":  "College/Career or technical school",
+        "graduate":        "Graduate school",
+    }
+    SCHOOL_EMPLOYMENT_ORDER = [
+        "not_in_school",
+        "high_school",
+        "ged",
+        "college_career",
+        "graduate",
+    ]
+    SCHOOL_EMPLOYMENT_STATUS = [
+        ("yes_full_time", "Full time", "#4F81BD"),
+        ("yes_part_time", "Part time", "#9DC3E6"),
+        ("job_training_program", "Job training program", "#F79646"),
+        ("no", "Unemployed", "#C00000"),
+    ]
+
+    school_totals = {
+        code: int((csv_df["q5_school_status"] == code).sum())
+        for code in SCHOOL_EMPLOYMENT_ORDER
+    }
+    school_codes = [code for code in SCHOOL_EMPLOYMENT_ORDER if school_totals[code] > 0]
+    school_labels = [SCHOOL_EMPLOYMENT_LABELS[code] for code in school_codes]
+    school_n = sum(school_totals[code] for code in school_codes)
+
+    if school_codes:
+        x = np.arange(len(school_codes))
+        width = 0.17
+        offsets = np.linspace(-1.5 * width, 1.5 * width, len(SCHOOL_EMPLOYMENT_STATUS))
+
+        fig, ax = plt.subplots(figsize=(8, 4.8))
+        for offset, (status_code, status_label, color) in zip(offsets, SCHOOL_EMPLOYMENT_STATUS):
+            vals = [
+                int(((csv_df["q5_school_status"] == school_code) & (csv_df["q8_employment_status"] == status_code)).sum())
+                for school_code in school_codes
+            ]
+            bars = ax.bar(x + offset, vals, width=width, label=status_label, color=color, zorder=3)
+            for bar, val in zip(bars, vals):
+                if val > 0:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        val + 0.8,
+                        f"{val}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=9,
+                    )
+
+        school_labels_wrapped = [
+            "College/Career or\ntechnical school" if label == "College/Career or technical school" else label
+            for label in school_labels
+        ]
+        ax.set_xticks(x)
+        ax.set_xticklabels(school_labels_wrapped, fontsize=10)
+        ax.set_ylim(0, max(1, max(
+            int(((csv_df["q5_school_status"] == school_code) & (csv_df["q8_employment_status"] == status_code)).sum())
+            for school_code in school_codes
+            for status_code, _, _ in SCHOOL_EMPLOYMENT_STATUS
+        )) + 10)
+        ax.set_title(
+            f"Youth Employment Status by Self-Reported School Enrollment\nMarch 2026, n={school_n}",
+            fontsize=11,
+            pad=12,
+        )
+        _apply_base_style(ax)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.02), ncol=4, fontsize=9, frameon=False,
+                  handlelength=0.6, handletextpad=0.3, columnspacing=1.4)
+        _save(fig, "chart_09_employment_by_school.png")
 
     # ------------------------------------------------------------------
     # Chart 4: Visit Frequency by Age — grouped vertical bar
@@ -1396,6 +1477,54 @@ def generate_charts():
             ax.text(cnt + 0.3, bar.get_y() + bar.get_height() / 2,
                     str(cnt), va="center", ha="left", fontsize=10)
         _save(fig, "chart_06_race_distribution.png")
+
+    # ------------------------------------------------------------------
+    # Chart 7: Communication Satisfaction (Q3) — horizontal bar
+    # ------------------------------------------------------------------
+    comm_df = pd.read_csv(str(CSV_PATH), encoding="utf-8-sig", dtype=str).fillna("")
+    Q3_CODES  = ["good_amount", "not_enough", "too_much"]
+    Q3_LABELS = ["Good amount", "Not enough", "Too much"]
+    q3_total  = comm_df[comm_df["q3_communication_level"].isin(Q3_CODES)].shape[0]
+    if q3_total > 0:
+        q3_vals = [100 * int((comm_df["q3_communication_level"] == c).sum()) / q3_total
+                   for c in Q3_CODES]
+        labels7 = Q3_LABELS[::-1]   # reverse for barh (Good amount at top)
+        vals7   = q3_vals[::-1]
+        fig, ax = plt.subplots(figsize=(6, 2))
+        y_pos = range(len(labels7))
+        bars = ax.barh(list(y_pos), vals7, color=PALETTE[0], zorder=3)
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(labels7, fontsize=10)
+        ax.set_xlim(0, 105)
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        _apply_hbar_style(ax)
+        for bar, val in zip(bars, vals7):
+            ax.text(val + 1, bar.get_y() + bar.get_height() / 2,
+                    f"{int(round(val))}%", va="center", ha="left", fontsize=10)
+        _save(fig, "chart_07_communication_satisfaction.png")
+
+    # ------------------------------------------------------------------
+    # Chart 8: Q2 Frequency for Not Enough group — horizontal bar
+    # ------------------------------------------------------------------
+    Q2_CODES      = ["almost_every_day", "about_once_a_week", "1_2_times_per_month", "less_than_once_a_month"]
+    Q2_LABELS_8   = ["Almost every day", "About once a week", "1\u20132 times per month", "Less than once a month"]
+    ne_df         = comm_df[comm_df["q3_communication_level"] == "not_enough"]
+    ne_q2_counts  = [int((ne_df["q2_communication_frequency"] == c).sum()) for c in Q2_CODES]
+    if any(v > 0 for v in ne_q2_counts):
+        labels8 = Q2_LABELS_8[::-1]   # reverse for barh (Almost every day at top)
+        vals8   = ne_q2_counts[::-1]
+        fig, ax = plt.subplots(figsize=(6, 2.5))
+        y_pos = range(len(labels8))
+        bars = ax.barh(list(y_pos), vals8, color=PALETTE[0], zorder=3)
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(labels8, fontsize=10)
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: str(int(x))))
+        _apply_hbar_style(ax)
+        for bar, val in zip(bars, vals8):
+            if val > 0:
+                ax.text(val + 0.15, bar.get_y() + bar.get_height() / 2,
+                        str(val), va="center", ha="left", fontsize=10)
+        _save(fig, "chart_08_communication_freq_not_enough.png")
 
     # ------------------------------------------------------------------
     # Summary
