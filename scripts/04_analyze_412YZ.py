@@ -55,9 +55,9 @@ RACE_GROUP_ORDER = [
 ]
 
 HOUSING_LABEL_MAP = {
-    "stable":          "Safe and stable (90+ days)",
-    "safe_not_90days": "Safe, but cannot stay 90 days",
-    "90days_not_safe": "Can stay 90 days, but not safe",
+    "stable":          "Safe and stable",
+    "safe_not_90days": "Safe, cannot stay 90 days",
+    "90days_not_safe": "Can stay, but not safe",
     "no_place":        "No place to stay",
 }
 HOUSING_ORDER = ["stable", "safe_not_90days", "90days_not_safe", "no_place"]
@@ -1265,6 +1265,11 @@ def generate_charts():
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
     PALETTE = ["#426FB3", "#C67A2A", "#8FB98A", "#B24A3D", "#D2A72C"]
+    ACCENT_DARK = "#2E568F"
+    # Shared 4-step analytical palette (low-risk → high-risk or good → bad).
+    # Used for housing status, and as accent source for single-highlight charts.
+    ANALYTICAL_PALETTE = ["#2E86AB", "#A8C5DA", "#F4A261", "#C1440E"]
+    ACCENT_ORANGE = ANALYTICAL_PALETTE[2]   # soft orange — shared highlight color
     GRID_COLOR = "#D9DDE3"
     TEXT_COLOR = "#1F2933"
     AXIS_COLOR = "#9AA5B1"
@@ -1286,7 +1291,7 @@ def generate_charts():
     def _apply_hbar_style(ax):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.spines["left"].set_color(TEXT_COLOR)
+        ax.spines["left"].set_visible(False)
         ax.spines["bottom"].set_color(AXIS_COLOR)
         ax.xaxis.grid(True, color=GRID_COLOR, linewidth=0.8, zorder=0)
         ax.yaxis.grid(False)
@@ -1322,31 +1327,54 @@ def generate_charts():
     # Chart 1: Coach Satisfaction (horizontal bar, top-2 box %)
     # ------------------------------------------------------------------
     rows05 = _load_sheet("05_q1")
-    labels1, vals1 = [], []
+    coach_rows = []
     for r in rows05:
         raw_label = list(r.values())[0]
         raw_pct   = list(r.values())[2] if len(r) > 2 else ""
         if not raw_pct:
             continue
-        label = str(raw_label).strip()
-        label = (label[:35] + "…") if len(label) > 35 else label
+        full_label = str(raw_label).strip()
+        label = (full_label[:35] + "…") if len(full_label) > 35 else full_label
         pct_val = float(str(raw_pct).replace("%", "").strip()) if str(raw_pct).replace("%", "").strip() else 0
-        labels1.append(label)
-        vals1.append(pct_val)
+        coach_rows.append((full_label, label, pct_val))
 
-    if labels1:
-        labels1 = labels1[::-1]
-        vals1   = vals1[::-1]
-        fig, ax = plt.subplots(figsize=(7.4, 3.6))
+    if coach_rows:
+        coach_rows = sorted(coach_rows, key=lambda item: (-item[2], item[0]))
+        labels1 = [item[1] for item in coach_rows]
+        vals1 = [item[2] for item in coach_rows]
+        full_labels1 = [item[0] for item in coach_rows]
+        colors1 = [ACCENT_ORANGE if label == "Is available to me when I need them" else PALETTE[0] for label in full_labels1]
+
+        fig, ax = plt.subplots(figsize=(7.6, 5.0))
+        fig.patch.set_edgecolor("white")
+        fig.patch.set_linewidth(0)
         y_pos = range(len(labels1))
-        bars = ax.barh(list(y_pos), vals1, color=PALETTE[0], zorder=3)
+        bars = ax.barh(list(y_pos), vals1, color=colors1, zorder=3, height=0.8)
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(labels1, fontsize=10)
+        ax.invert_yaxis()
         ax.set_xlim(0, 100)
         ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
-        ax.set_xlabel("Top-two-box share of respondents", fontsize=9, color=TEXT_COLOR, labelpad=8)
+        ax.set_xlabel("Percent of respondents rating each item Often or All the Time", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
+        fig.suptitle(
+            "Coach Satisfaction Ratings, Mar-26 (% Often or All the Time)",
+            x=0.5,
+            y=1.0,
+            ha="center",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+            color=TEXT_COLOR,
+        )
+        ax.set_title(
+            "Current year only. See table above for trend across all survey years.",
+            loc="left",
+            fontsize=9,
+            color=TEXT_COLOR,
+            pad=10,
+        )
         for bar, val in zip(bars, vals1):
             inside_bar = val >= 14
             x_pos = val - 1.8 if inside_bar else val + 1.2
@@ -1391,6 +1419,7 @@ def generate_charts():
     age_groups_h2 = [a for a in age_groups_h if sum(h_data[a].values()) > 0]
     age_display_h2 = [age_display_h[age_groups_h.index(a)] for a in age_groups_h2]
 
+    HOUSING_COLORS = ANALYTICAL_PALETTE  # steel blue → light blue → soft orange → brick red
     fig, ax = plt.subplots(figsize=(8, 4.5))
     lefts = np.zeros(len(age_groups_h2))
     for ci, code in enumerate(HOUSING_CHART_ORDER):
@@ -1398,11 +1427,12 @@ def generate_charts():
         row_totals = np.array([sum(h_data[a].values()) for a in age_groups_h2], dtype=float)
         seg_pcts   = np.where(row_totals > 0, 100 * seg_counts / row_totals, 0)
         bars = ax.barh(range(len(age_groups_h2)), seg_pcts, left=lefts,
-                       color=PALETTE[ci % len(PALETTE)], label=HOUSING_CHART_LABELS[code], zorder=3)
+                       color=HOUSING_COLORS[ci], label=HOUSING_CHART_LABELS[code], zorder=3)
+        label_color = TEXT_COLOR if ci in (1, 2) else "white"
         for i, (bar, pval) in enumerate(zip(bars, seg_pcts)):
             if pval >= 8:
                 ax.text(lefts[i] + pval / 2, bar.get_y() + bar.get_height() / 2,
-                        f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color="white")
+                        f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color=label_color)
         lefts += seg_pcts
     ax.set_yticks(range(len(age_groups_h2)))
     ax.set_yticklabels(age_display_h2, fontsize=10)
@@ -1683,17 +1713,48 @@ def generate_charts():
                    for c in Q3_CODES]
         labels7 = Q3_LABELS[::-1]   # reverse for barh (Good amount at top)
         vals7   = q3_vals[::-1]
-        fig, ax = plt.subplots(figsize=(6, 2))
+        fig, ax = plt.subplots(figsize=(6, 3.2))
+        fig.patch.set_edgecolor("white")
+        fig.patch.set_linewidth(0)
         y_pos = range(len(labels7))
-        bars = ax.barh(list(y_pos), vals7, color=PALETTE[0], zorder=3)
+        bars = ax.barh(list(y_pos), vals7, color=PALETTE[0], zorder=3, height=0.8)
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(labels7, fontsize=10)
-        ax.set_xlim(0, 105)
+        ax.set_xlim(0, 100)
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        ax.set_xlabel("Percent of respondents", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
+        fig.suptitle(
+            "Rating of Coach Communication Amount, Mar-26",
+            x=0.5,
+            y=1.0,
+            ha="center",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+            color=TEXT_COLOR,
+        )
+        ax.set_title(
+            "How youth rated the frequency of communication with their coach",
+            loc="left",
+            fontsize=9,
+            color=TEXT_COLOR,
+            pad=10,
+        )
         for bar, val in zip(bars, vals7):
-            ax.text(val + 1, bar.get_y() + bar.get_height() / 2,
-                    f"{int(round(val))}%", va="center", ha="left", fontsize=10)
+            inside_bar = val >= 14
+            x_pos = val - 1.8 if inside_bar else val + 1.2
+            ax.text(
+                x_pos,
+                bar.get_y() + bar.get_height() / 2,
+                f"{int(round(val))}%",
+                va="center",
+                ha="right" if inside_bar else "left",
+                fontsize=9,
+                fontweight="bold",
+                color="white" if inside_bar else TEXT_COLOR,
+            )
         _save(fig, "chart_07_communication_satisfaction.png")
 
     # ------------------------------------------------------------------
@@ -1703,20 +1764,54 @@ def generate_charts():
     Q2_LABELS_8   = ["Almost every day", "About once a week", "1\u20132 times per month", "Less than once a month"]
     ne_df         = comm_df[comm_df["q3_communication_level"] == "not_enough"]
     ne_q2_counts  = [int((ne_df["q2_communication_frequency"] == c).sum()) for c in Q2_CODES]
+    ne_total = len(ne_df)
     if any(v > 0 for v in ne_q2_counts):
         labels8 = Q2_LABELS_8[::-1]   # reverse for barh (Almost every day at top)
         vals8   = ne_q2_counts[::-1]
-        fig, ax = plt.subplots(figsize=(6, 2.5))
+        fig, ax = plt.subplots(figsize=(6, 3.2))
+        fig.patch.set_edgecolor("white")
+        fig.patch.set_linewidth(0)
         y_pos = range(len(labels8))
-        bars = ax.barh(list(y_pos), vals8, color=PALETTE[0], zorder=3)
+        bars = ax.barh(list(y_pos), vals8, color=PALETTE[0], zorder=3, height=0.8)
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(labels8, fontsize=10)
+        max_val = max(vals8) if vals8 else 1
+        ax.set_xlim(0, max_val * 1.18)
+        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True))
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: str(int(x))))
+        ax.set_xlabel("Number of respondents", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
+        fig.suptitle(
+            f"Communication Frequency Among Youth Who Wanted More, Mar-26",
+            x=0.5,
+            y=1.0,
+            ha="center",
+            va="top",
+            fontsize=12,
+            fontweight="bold",
+            color=TEXT_COLOR,
+        )
+        ax.set_title(
+            f"Among {ne_total} youth who said communication was \u2018Not Enough\u2019 (Q3)",
+            loc="left",
+            fontsize=9,
+            color=TEXT_COLOR,
+            pad=10,
+        )
         for bar, val in zip(bars, vals8):
             if val > 0:
-                ax.text(val + 0.15, bar.get_y() + bar.get_height() / 2,
-                        str(val), va="center", ha="left", fontsize=10)
+                inside_bar = val >= max_val * 0.25
+                x_pos = val - 0.3 if inside_bar else val + 0.3
+                ax.text(
+                    x_pos,
+                    bar.get_y() + bar.get_height() / 2,
+                    str(val),
+                    va="center",
+                    ha="right" if inside_bar else "left",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="white" if inside_bar else TEXT_COLOR,
+                )
         _save(fig, "chart_08_communication_freq_not_enough.png")
 
     # ------------------------------------------------------------------

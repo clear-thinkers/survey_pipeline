@@ -231,6 +231,129 @@ const NO_BORDER = {
   right:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
 };
 
+function makeStyledTableCell(text, {
+  width,
+  bold = false,
+  italic = false,
+  shading,
+  columnSpan,
+  align,
+  size = 22,
+} = {}) {
+  return new TableCell({
+    width,
+    columnSpan,
+    margins: { top: 80, bottom: 80, left: 120, right: 120 },
+    borders: NO_BORDER,
+    shading: shading
+      ? { fill: shading, type: ShadingType.CLEAR, color: "auto" }
+      : undefined,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [
+      new Paragraph({
+        alignment: align,
+        children: [
+          new TextRun({
+            text: String(text ?? ""),
+            bold,
+            italic,
+            font: "Calibri",
+            size,
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+function makeCoachSatisfactionTable(dataRows, currN, captionText = "") {
+  const fixedWidths = captionText && TABLE_WIDTHS[captionText]
+    ? TABLE_WIDTHS[captionText]
+    : [3900, 910, 910, 910, 910, 910, 910];
+  const yearCols = [...Q1_BENCHMARKS.col, "Mar-26"];
+  const sampleSizes = [...Q1_BENCHMARKS.n, currN];
+  const headerFill = HDR_FILL;
+  const subrowFill = "EEF3F8";
+
+  const headerTop = new TableRow({
+    children: [
+      makeStyledTableCell("My Youth Coach...", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        bold: true,
+        shading: headerFill,
+      }),
+      makeStyledTableCell("% Often or All the Time", {
+        width: { size: fixedWidths.slice(1).reduce((sum, val) => sum + val, 0), type: WidthType.DXA },
+        bold: true,
+        shading: headerFill,
+        columnSpan: yearCols.length,
+        align: AlignmentType.CENTER,
+      }),
+    ],
+  });
+
+  const headerYears = new TableRow({
+    children: [
+      makeStyledTableCell("", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        shading: headerFill,
+      }),
+      ...yearCols.map((label, idx) => makeStyledTableCell(label, {
+        width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+        bold: true,
+        shading: headerFill,
+        align: AlignmentType.CENTER,
+      })),
+    ],
+  });
+
+  const sampleRow = new TableRow({
+    children: [
+      makeStyledTableCell("n", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        italic: true,
+        shading: subrowFill,
+      }),
+      ...sampleSizes.map((label, idx) => makeStyledTableCell(label, {
+        width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+        italic: true,
+        shading: subrowFill,
+        align: AlignmentType.CENTER,
+      })),
+    ],
+  });
+
+  const itemRows = dataRows.map((row) => {
+    const label = row.label;
+    const values = [...Q1_BENCHMARKS[label], row.current];
+    return new TableRow({
+      children: [
+        makeStyledTableCell(label, {
+          width: { size: fixedWidths[0], type: WidthType.DXA },
+        }),
+        ...values.map((value, idx) => makeStyledTableCell(value, {
+          width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+          align: AlignmentType.CENTER,
+        })),
+      ],
+    });
+  });
+
+  return new Table({
+    width: { size: fixedWidths.reduce((sum, val) => sum + val, 0), type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    borders: {
+      top:     { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      bottom:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      left:    { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      right:   { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideH: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideV: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+    },
+    rows: [headerTop, headerYears, sampleRow, ...itemRows],
+  });
+}
+
 /**
  * makeTable(rows, totalLabel)
  * rows: array of plain objects. Columns are derived from Object.keys(rows[0]).
@@ -608,6 +731,7 @@ async function sec_race() {
     ),
     makeCaption(cap1),
     makeTable(rowsOnce, "Total", cap1),
+    makePara("Note: If a youth selected 2 or more race tokens, they are attributed to \"Multiracial\" only.", { italic: true }),
     makeCaption(cap2),
     makeTable(rowsMulti, "Total", cap2),
     makePara(""),
@@ -633,20 +757,7 @@ function sec_coach_satisfaction() {
   }
 
   const priorCols = Q1_BENCHMARKS.col;
-  const currCol   = "Mar-26";
   const currN     = `n=${N_RESPONDENTS}`;
-  const allCols   = ["My Youth Coach\u2026", ...priorCols, currCol];
-
-  const headerRow = { _header: true };
-  allCols.forEach((c) => { headerRow[c] = c; });
-
-  const row1 = {}; allCols.forEach((c, i) => { row1[c] = i === 0 ? "My Youth Coach\u2026" : "% Often or All the Time"; });
-  const row2 = {}; allCols.forEach((c) => { row2[c] = c; });
-  const row3 = {}; allCols.forEach((c, i) => {
-    if (i === 0) row3[c] = "My Youth Coach\u2026";
-    else if (i <= priorCols.length) row3[c] = Q1_BENCHMARKS.n[i - 1];
-    else row3[c] = currN;
-  });
 
   const FIELD_LABELS = [
     "Is trustworthy",
@@ -656,21 +767,18 @@ function sec_coach_satisfaction() {
     "Makes me feel heard and understood",
   ];
   const dataRowsQ1 = FIELD_LABELS.map((label) => {
-    const obj = {};
-    allCols.forEach((c, i) => {
-      if (i === 0) obj[c] = label;
-      else if (i <= priorCols.length) obj[c] = Q1_BENCHMARKS[label][i - 1];
-      else obj[c] = currPct[label] || "";
-    });
-    return obj;
+    return {
+      label,
+      current: currPct[label] || "",
+    };
   });
 
   const cap = "Satisfaction Ratings for Youth Coaches Over Time";
-  return { pctTrust, pctVals, headerRow, row1, row2, row3, dataRowsQ1, cap };
+  return { pctTrust, pctVals, currN, dataRowsQ1, cap };
 }
 
 async function sec_coach_satisfaction_async() {
-  const { pctTrust, pctVals, headerRow, row1, row2, row3, dataRowsQ1, cap } = sec_coach_satisfaction();
+  const { pctTrust, pctVals, currN, dataRowsQ1, cap } = sec_coach_satisfaction();
   return [
     makeHeading("FINDINGS", 1),
     makePara(""),
@@ -691,7 +799,7 @@ async function sec_coach_satisfaction_async() {
       "A small number of youth said their coach Rarely or Never exhibits one or more of these qualities."
     ),
     makeCaption(cap),
-    makeTable([headerRow, row1, row2, row3, ...dataRowsQ1], "__none__", cap),
+    makeCoachSatisfactionTable(dataRowsQ1, currN, cap),
     await embedChart("chart_01_coach_satisfaction.png", 5.5),
     makePara(""),
   ];
@@ -702,17 +810,16 @@ async function sec_communication() {
   const rows = loadSheet("06_communication");
   const data = rows.filter((r) => !r._header);
   const cols = Object.keys(rows[0] || {}).filter((k) => k !== "_header");
-  let goodPct = "", notEnoughCount = "", notEnoughPct = "", tooMuchPct = "";
+  let goodPct = "", notEnoughPct = "", tooMuchPct = "";
   for (const row of data) {
-    const first = String(row[cols[0]] ?? "").toLowerCase();
-    if (first.includes("good amount")) {
+    const first = String(row[cols[0]] ?? "").trim().toLowerCase();
+    if (first === "good amount") {
       goodPct = cols.length > 2 ? String(row[cols[2]] ?? "") : "";
     }
-    if (first.includes("not enough")) {
-      notEnoughCount = String(row[cols[1]] ?? "");
+    if (first === "not enough") {
       notEnoughPct   = cols.length > 2 ? String(row[cols[2]] ?? "") : "";
     }
-    if (first.includes("too much")) {
+    if (first === "too much") {
       tooMuchPct = cols.length > 2 ? String(row[cols[2]] ?? "") : "";
     }
   }
@@ -728,16 +835,15 @@ async function sec_communication() {
   const pctGoodMonthly = goodQ2Total ? pct(nGoodMonthly, goodQ2Total) : "";
   const pctGoodWeekly  = goodQ2Total ? pct(nGoodWeekly,  goodQ2Total) : "";
   const pctGoodDaily   = goodQ2Total ? pct(nGoodDaily,   goodQ2Total) : "";
+  const notEnoughRespondentCount = neRows.length;
   const nNeMonthly   = neRows.filter((r) => r.q2_communication_frequency === "1_2_times_per_month").length;
   const nNeLess      = neRows.filter((r) => r.q2_communication_frequency === "less_than_once_a_month").length;
-  const nNeWeekly    = neRows.filter((r) => r.q2_communication_frequency === "about_once_a_week").length;
 
-  const para1 = (goodPct && notEnoughPct && tooMuchPct)
-    ? `${goodPct} of respondents rated their communication with their coach a Good amount. ` +
-      `${notEnoughPct} of respondents (${notEnoughCount} youth) reported their communication was Not Enough, ` +
-      `a slight increase from 11% (19 youth) in February 2025; ${tooMuchPct} reported Too much.`
-    : "The majority of youth communicate with their coaches weekly or monthly. " +
-      "A small number of youth reported their communication was Not Enough.";
+  const para1 = (goodPct && notEnoughPct && tooMuchPct && notEnoughRespondentCount)
+    ? `Most respondents rated the amount of communication with their coach positively. ` +
+      `${goodPct} reported the amount was a Good amount, while ${notEnoughPct} (${notEnoughRespondentCount} youth) reported it was Not enough and ${tooMuchPct} reported Too much. ` +
+      `This is a slight increase from February 2025, when 11% (19 youth) reported their communication was Not enough.`
+    : "";
 
   const para2 = goodQ2Total
     ? `Among youth who rated communication a Good amount, nearly half communicated ` +
@@ -745,10 +851,9 @@ async function sec_communication() {
       `about once a week (${pctGoodWeekly}), and ${pctGoodDaily} communicated almost every day.`
     : "";
 
-  const para3 = neRows.length
-    ? `Most of the ${notEnoughCount} youth who reported Not Enough communicated with their coach ` +
-      `1\u20132 times per month (${nNeMonthly} youth) or less than once a month (${nNeLess} youth); ` +
-      `${nNeWeekly} youth reported about once a week.`
+  const para3 = (notEnoughPct && notEnoughRespondentCount)
+    ? `${notEnoughPct} of respondents (n=${notEnoughRespondentCount}) reported their communication with their coach was Not enough. ` +
+      `Most of these youth communicated 1\u20132 times per month (${nNeMonthly} youth) or less than once a month (${nNeLess} youth).`
     : "";
 
   const items = [
