@@ -29,7 +29,9 @@ This document is the current operating view of the repository: what exists, what
 | --- | --- | --- | --- |
 | 02b | `scripts/02b_ingest_online_IL.py` | Implemented | Append online SurveyMonkey responses into the compiled IL dataset. |
 | 03 | `scripts/03_qa_IL.py` | Implemented | Generate QA flags and reviewer workbook for IL. |
-| 04+ | Not yet implemented | Planned | IL downstream correction-apply, standardization, analysis, and reporting steps are still to be built. |
+| 03b | `scripts/03b_apply_corrections_IL.py` | Implemented | Apply reviewed QA corrections back to the IL CSV. |
+| 04 | `scripts/04_analyze_IL.py` | Implemented | Build descriptive summaries and chart-ready outputs for IL. |
+| 05 | `scripts/05_report_IL.js` | Active | Generate the IL narrative report. |
 
 ## Current QA Workflow
 
@@ -78,14 +80,15 @@ This is implemented in both:
 
 ## Current Priorities
 
-### 1. Finish the IL downstream pipeline
+### 1. Maintain the IL downstream pipeline
 
-Needed scripts or equivalents:
+Implemented IL downstream steps now include:
 
-- correction apply step after `scripts/03_qa_IL.py`
-- field standardization step where needed
-- analysis/output generation
+- correction apply after `scripts/03_qa_IL.py`
+- analysis workbook and chart generation
 - report generation
+
+Remaining work, if needed, is limited to any future IL-specific standardization refinements.
 
 ### 2. Keep prompts aligned with QA normalization
 

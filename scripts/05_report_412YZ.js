@@ -1014,27 +1014,61 @@ function sec_transportation() {
   ];
 }
 
-function sec_voter_reg() {
+function sec_voter_reg(dfCsv) {
   const subs      = splitSheet("15_voter_reg");
   const dfReg     = subs["Voter Registration by Age"]       || [];
   const dfReasons = subs["Not Registered Reasons by Age"]   || [];
   let totalPctReg = "[PLACEHOLDER]";
+  let pct18to20   = "[PLACEHOLDER]";
+  let pct21to23   = "[PLACEHOLDER]";
   const regData = dfReg.filter((r) => !r._header);
   const regRow  = regData.find((r) => firstCol(r) === "Registered to Vote");
   if (regRow && regRow["Total"]) totalPctReg = regRow["Total"];
+  if (regRow && regRow["18-20 years old"]) pct18to20 = regRow["18-20 years old"];
+  if (regRow && regRow["21-23 years old"]) pct21to23 = regRow["21-23 years old"];
+
+  const eligibleRows = dfCsv.filter((row) => {
+    const age = String(row.age_range || "").trim();
+    const reg = String(row.q7_registered_to_vote || "").trim();
+    return ["18_20", "21_23"].includes(age) && ["yes", "no"].includes(reg);
+  });
+  const femaleRows = eligibleRows.filter((row) => String(row.gender || "").trim() === "Female");
+  const maleRows   = eligibleRows.filter((row) => String(row.gender || "").trim() === "Male");
+  const pctFemaleReg = pct(
+    femaleRows.filter((row) => row.q7_registered_to_vote === "yes").length,
+    femaleRows.length,
+  ) || "[PLACEHOLDER]";
+  const pctMaleReg = pct(
+    maleRows.filter((row) => row.q7_registered_to_vote === "yes").length,
+    maleRows.length,
+  ) || "[PLACEHOLDER]";
+  const reasonRows = eligibleRows.filter((row) => String(row.q7a_not_registered_reasons || "").trim() !== "");
+  const dontKnowHowCount = reasonRows.filter((row) =>
+    String(row.q7a_not_registered_reasons || "").split("|").map((part) => part.trim()).includes("dont_know_how")
+  ).length;
+  const pctDontKnowHow = pct(dontKnowHowCount, reasonRows.length) || "[PLACEHOLDER]";
+  const inconsistentRegistered = eligibleRows.filter((row) =>
+    row.q7_registered_to_vote === "yes" && String(row.q7a_not_registered_reasons || "").trim() !== ""
+  ).length;
+
   const cap1 = "Self-Reported Voter Registration by Age";
   const cap2 = "Reasons Youth Report Not Registering to Vote";
   return [
     makeHeading("Voting", 1),
     makePara(
-      "Youth ages 18 and older were asked to report on whether they are registered " +
-      `to vote. Overall, ${totalPctReg} of eligible respondents reported being registered to vote.`
+      "Youth ages 18 and older were asked whether they are registered to vote; overall, " +
+      `${totalPctReg} of eligible respondents reported being registered, down from 67% in March 2025.`
+    ),
+    makePara(
+      `Older youth were more likely to be registered than youth ages 18 to 20 (${pct21to23} of 21- to 23-year-olds, compared with ${pct18to20} of 18- to 20-year-olds), and females reported higher registration rates than males (${pctFemaleReg} and ${pctMaleReg}, respectively).`
     ),
     makeCaption(cap1),
     makeTable(dfReg, "__none__", cap1),
     makePara(
-      "The most common reason youth provided for not registering to vote is that " +
-      "they believe their vote won\u2019t make a difference."
+      "As in March 2025, the most common reason youth gave for not registering to vote was believing their vote would not make a difference, followed by not understanding politics."
+    ),
+    makePara(
+      `${dontKnowHowCount} of the ${reasonRows.length} youth who provided a reason (${pctDontKnowHow}) said they did not know how to register, and ${inconsistentRegistered === 0 ? "unlike March 2025, no respondents in the current data reported being registered while also selecting a reason for not being registered" : `${inconsistentRegistered} respondents reported being registered while also selecting a reason for not being registered`}.`
     ),
     makeCaption(cap2),
     makeTable(dfReasons, "__none__", cap2),
@@ -1047,28 +1081,84 @@ async function sec_zone_visit() {
   const dfFreq    = subs["Visit Frequency by Age"]       || [];
   const dfReasons = subs["Visit Reasons (frequent)"]     || [];
   const dfBarriers= subs["Visit Barriers (infrequent)"]  || [];
+  const freqData = dfFreq.filter((r) => !r._header);
+  const reasonData = dfReasons.filter((r) => !r._header);
+  const barrierData = dfBarriers.filter((r) => !r._header);
+  const num = (row, col) => Number(String(row?.[col] ?? "").replace(/[^0-9.-]/g, "")) || 0;
+
+  const totalVisitRow = freqData.find((r) => firstCol(r) === "Total");
+  const weeklyRow = freqData.find((r) => firstCol(r) === "Every week");
+  const monthlyRow = freqData.find((r) => firstCol(r) === "1-3 times per month");
+  const lessMonthlyRow = freqData.find((r) => firstCol(r) === "Less than once per month");
+  const neverRow = freqData.find((r) => firstCol(r) === "Never");
+
+  const totalVisits = num(totalVisitRow, "Total");
+  const weeklyTotal = num(weeklyRow, "Total");
+  const monthlyTotal = num(monthlyRow, "Total");
+  const lessMonthlyTotal = num(lessMonthlyRow, "Total");
+  const neverTotal = num(neverRow, "Total");
+  const atLeastMonthlyTotal = weeklyTotal + monthlyTotal;
+
+  const pctWeekly = pct(weeklyTotal, totalVisits) || "[PLACEHOLDER]";
+  const pctMonthly = pct(monthlyTotal, totalVisits) || "[PLACEHOLDER]";
+  const pctLessMonthly = pct(lessMonthlyTotal, totalVisits) || "[PLACEHOLDER]";
+  const pctNever = pct(neverTotal, totalVisits) || "[PLACEHOLDER]";
+  const pctWeekly16to17 = pct(num(weeklyRow, "16-17 years old"), num(totalVisitRow, "16-17 years old")) || "[PLACEHOLDER]";
+  const pctWeekly18to20 = pct(num(weeklyRow, "18-20 years old"), num(totalVisitRow, "18-20 years old")) || "[PLACEHOLDER]";
+  const pctWeekly21to23 = pct(num(weeklyRow, "21-23 years old"), num(totalVisitRow, "21-23 years old")) || "[PLACEHOLDER]";
+
+  const seeCoachRow = reasonData.find((r) => firstCol(r) === "See my Youth Coach or other Zone Staff");
+  const foodRow = reasonData.find((r) => firstCol(r) === "Eat food");
+  const scheduledRow = reasonData.find((r) => firstCol(r) === "Participate in a scheduled activity");
+  const goalsRow = reasonData.find((r) => firstCol(r) === "Work toward my goals");
+  const safePlaceRow = reasonData.find((r) => firstCol(r) === "Be in a safe place");
+  const escapeRow = reasonData.find((r) => firstCol(r) === "Escape problems/issues");
+  const frequent18to20 = num(weeklyRow, "18-20 years old") + num(monthlyRow, "18-20 years old");
+  const frequent21to23 = num(weeklyRow, "21-23 years old") + num(monthlyRow, "21-23 years old");
+
+  const pctSeeCoach = pct(num(seeCoachRow, "Total"), atLeastMonthlyTotal) || "[PLACEHOLDER]";
+  const pctFood = pct(num(foodRow, "Total"), atLeastMonthlyTotal) || "[PLACEHOLDER]";
+  const pctScheduled = pct(num(scheduledRow, "Total"), atLeastMonthlyTotal) || "[PLACEHOLDER]";
+  const pctGoals = pct(num(goalsRow, "Total"), atLeastMonthlyTotal) || "[PLACEHOLDER]";
+  const pctSafe21to23 = pct(num(safePlaceRow, "21-23 years old"), frequent21to23) || "[PLACEHOLDER]";
+  const pctEscape21to23 = pct(num(escapeRow, "21-23 years old"), frequent21to23) || "[PLACEHOLDER]";
+  const pctSafe18to20 = pct(num(safePlaceRow, "18-20 years old"), frequent18to20) || "[PLACEHOLDER]";
+  const pctEscape18to20 = pct(num(escapeRow, "18-20 years old"), frequent18to20) || "[PLACEHOLDER]";
+
+  const barrierRespondentsRow = barrierData.find((r) => firstCol(r) === "Total respondents");
+  const activitiesRow = barrierData.find((r) => firstCol(r) === "More activities that interest me");
+  const inviteRow = barrierData.find((r) => firstCol(r) === "Invitation from my Youth Coach");
+  const infoRow = barrierData.find((r) => firstCol(r) === "Knowing more about activities");
+  const barrierTotal = num(barrierRespondentsRow, "Total");
+  const pctActivities = pct(num(activitiesRow, "Total"), barrierTotal) || "[PLACEHOLDER]";
+  const pctInvite = pct(num(inviteRow, "Total"), barrierTotal) || "[PLACEHOLDER]";
+  const pctInfo = pct(num(infoRow, "Total"), barrierTotal) || "[PLACEHOLDER]";
+  const invite18to20 = num(inviteRow, "18-20 years old");
+  const infrequent18to20 = num(barrierRespondentsRow, "18-20 years old");
+
   const cap1 = "Visit Frequency by Age";
   const cap2 = "What Are the Main Reasons Youth Come to the Youth Zone?";
   const cap3 = "What Would Make Someone Who Rarely Visits the Zone Want to Come, by Age";
   return [
     makeHeading("Zone Experience", 1),
     makePara(
-      "This survey includes questions to better understand participants\u2019 " +
-      "experiences at the Zone. Attendance patterns at the Zone vary by age, with " +
-      "older youth coming more frequently than youth ages 16 to 17."
+      "Attendance patterns at the Zone vary by age, with older youth coming more frequently than youth ages 16 to 17. " +
+      `Overall, ${pctWeekly} reported attending every week and ${pctMonthly} one to three times per month, while ${pctLessMonthly} reported visiting less than once per month and ${pctNever} indicated they never visit the downtown Zone. ` +
+      `This represents a modest decrease in regular attendance from March 2025, when 52% of respondents reported coming at least monthly; no 16- to 17-year-olds reported weekly attendance, compared with ${pctWeekly18to20} of youth ages 18 to 20 and ${pctWeekly21to23} of youth ages 21 to 23.`
     ),
     makeCaption(cap1),
     makeTable(dfFreq, "Total", cap1),
     await embedChart("chart_04_visit_frequency.png", 5.5),
     makePara(
-      "As in prior years, most youth report coming to the 412 Youth Zone downtown " +
-      "to see their coach and to work toward their goals."
+      `As in prior years, most youth who come at least monthly report coming to the 412 Youth Zone downtown to see their Youth Coach or other Zone staff (${pctSeeCoach}). ` +
+      `Food (${pctFood}) and scheduled activities (${pctScheduled}) were also among the most common reasons for coming this year, ahead of working toward goals (${pctGoals}). ` +
+      `Among frequent visitors ages 21 to 23, ${pctSafe21to23} reported coming to be in a safe place and the same share reported coming to escape problems or issues, compared with ${pctSafe18to20} and ${pctEscape18to20}, respectively, of frequent visitors ages 18 to 20.`
     ),
     makeCaption(cap2),
     makeTable(dfReasons, "__none__", cap2),
     makePara(
-      "For youth who never visit the Zone, or visit less than monthly, they were " +
-      "asked what would make them want to come more frequently."
+      `For youth who never visit the Zone, or visit less than monthly, the most common response for what would make them want to come more frequently was more activities that interest them (${pctActivities}), followed closely by an invitation from their Youth Coach (${pctInvite}) and knowing more about activities (${pctInfo}). ` +
+      `An invitation from a coach was especially salient for 18- to 20-year-olds, selected by ${invite18to20} of ${infrequent18to20} infrequent visitors in that age group. Open-text \"other\" responses most often referenced work or school schedules, transportation, and distance from the Zone.`
     ),
     makeCaption(cap3),
     makeTable(dfBarriers, "__none__", cap3),
@@ -1144,13 +1234,48 @@ function sec_respect_environment() {
 function sec_banking(dfCsv) {
   const subs = splitSheet("20_banking");
   const bankRows = (subs["Bank Account Status by Age"] || []).filter((r) => !r._header);
+  const methodRows = (subs["Money Methods by Age (Q24)"] || []).filter((r) => !r._header);
+  const usageRows = (subs["Account Usage by Age (Q26b)"] || []).filter((r) => !r._header);
   const hasAcctRow = bankRows.find((r) => firstCol(r).toLowerCase().includes("currently have"));
+  const checkingRow = bankRows.find((r) => firstCol(r).toLowerCase().includes("checking account"));
+  const savingsRow = bankRows.find((r) => firstCol(r).toLowerCase().includes("savings account"));
+  const digitalAppsRow = methodRows.find((r) => firstCol(r) === "Venmo, Zelle, CashApp, etc.");
+  const bankMethodRow = methodRows.find((r) => firstCol(r) === "Bank account");
+  const cashHomeRow = methodRows.find((r) => firstCol(r) === "Saving/storing cash at home");
+  const savingMoneyRow = usageRows.find((r) => firstCol(r) === "Saving money");
+  const directDepositRow = usageRows.find((r) => firstCol(r) === "Direct deposit");
+  const billsRow = usageRows.find((r) => firstCol(r) === "Paying household bills");
   const pctHas = (hasAcctRow && hasAcctRow["Percent of Total"])
     ? hasAcctRow["Percent of Total"]
     : pct(dfCsv.filter((r) => {
         const parts = (r.q25_bank_account || "").split("|");
         return parts.some((t) => ["checking", "savings"].includes(t.trim()));
       }).length, dfCsv.length);
+  const pctCheckingAll = checkingRow?.["Percent of Total"] || "[PLACEHOLDER]";
+  const pctSavingsAll = savingsRow?.["Percent of Total"] || "[PLACEHOLDER]";
+  const pctApps = digitalAppsRow?.["Percent of All"] || "[PLACEHOLDER]";
+  const pctBankMethod = bankMethodRow?.["Percent of All"] || "[PLACEHOLDER]";
+  const pctCashHome = cashHomeRow?.["Percent of All"] || "[PLACEHOLDER]";
+  const pctSavingMoney = savingMoneyRow?.["% of Account Holders"] || "[PLACEHOLDER]";
+  const pctDirectDeposit = directDepositRow?.["% of Account Holders"] || "[PLACEHOLDER]";
+  const pctBillsOlder = (() => {
+    const num = Number(String(billsRow?.["21-23 years old"] ?? "").replace(/[^0-9.-]/g, "")) || 0;
+    const den = Number(String(hasAcctRow?.["21-23 years old"] ?? "").replace(/[^0-9.-]/g, "")) || 0;
+    return pct(num, den) || "[PLACEHOLDER]";
+  })();
+  const acctHolders = dfCsv.filter((r) => {
+    const parts = String(r.q25_bank_account || "").split("|").map((t) => t.trim());
+    return parts.some((t) => ["checking", "savings"].includes(t));
+  });
+  const acctNoBankMethod = acctHolders.filter((r) => {
+    const parts = String(r.q24_money_methods || "").split("|").map((t) => t.trim());
+    return !parts.includes("bank_account");
+  });
+  const acctNoBankMethodDigitalApps = acctNoBankMethod.filter((r) => {
+    const parts = String(r.q24_money_methods || "").split("|").map((t) => t.trim());
+    return parts.includes("digital_apps");
+  });
+  const pctAppsAmongNonBankUsers = pct(acctNoBankMethodDigitalApps.length, acctNoBankMethod.length) || "[PLACEHOLDER]";
   const cap1 = "Banking Status by Age";
   const cap2 = "Methods Youth Use to Store, Receive, and Transfer Money, by Age";
   const cap3 = "Ways Respondents Use Their Bank Account(s), by Age";
@@ -1158,8 +1283,14 @@ function sec_banking(dfCsv) {
     makeHeading("Banking", 1),
     makePara(
       "Participants were asked questions about their use of banks and other ways " +
-      "that they store, receive, and transfer money. " +
-      `Overall, ${pctHas} of respondents reported currently having a bank account.`
+      "that they store, receive, and transfer money. Banking practices vary by age, with older youth more likely than 16- to 17-year-olds to report having an account. " +
+      `Overall, ${pctHas} of respondents reported currently having a bank account, down slightly from 69% in March 2025.`
+    ),
+    makePara(
+      `Nearly all youth who reported having an account also indicated they have a checking account (${pctCheckingAll} of all respondents), and ${pctSavingsAll} reported having a savings account. Digital payment apps such as Venmo, Zelle, and CashApp (${pctApps}) were used slightly more often than bank accounts themselves (${pctBankMethod}) to store, receive, and transfer money, while ${pctCashHome} reported keeping cash at home.`
+    ),
+    makePara(
+      `Among youth with accounts, the most common uses were saving money (${pctSavingMoney}) and direct deposit (${pctDirectDeposit}). Older account holders were also more likely to report using their accounts to pay household bills (${pctBillsOlder} of account holders ages 21 to 23), and ${pctAppsAmongNonBankUsers} of youth who had an account but did not report using it to manage money said they rely on digital payment apps instead.`
     ),
     makeCaption(cap1),
     makeTable(subs["Bank Account Status by Age"]     || [], "__none__", cap1),
@@ -1191,21 +1322,54 @@ async function sec_nps() {
 }
 
 function sec_comments() {
-  const rows22  = loadSheet("22_comments");
-  const data22  = rows22.filter((r) => !r._header);
-  const nCom    = data22.filter((r) => firstCol(r) !== "").length;
+  const subs = splitSheet("22_comments");
+  const summaryRows = (subs["Comment Summary"] || []).filter((r) => !r._header);
+  const commentRows = (subs["Comment Listing"] || []).filter((r) => !r._header);
+  const summaryCount = (label) => {
+    const row = summaryRows.find((r) => firstCol(r) === label);
+    return row ? String(row["Count"] ?? "") : "";
+  };
+  const nCom = summaryCount("Total non-blank comments") || String(commentRows.length);
+  const substantiveCount = summaryCount("Substantive comments used for narrative review") || "[PLACEHOLDER]";
+  const commentKey = (() => {
+    const cols = Object.keys(commentRows[0] || {}).filter((k) => k !== "_header");
+    return cols.includes("Comment") ? "Comment" : cols[cols.length - 1];
+  })();
+  const substantive = commentRows
+    .map((row) => String(row[commentKey] ?? "").trim())
+    .filter((text) => text && text !== "nan")
+    .filter((text) => ![
+      "no",
+      "nope",
+      "none.",
+      "none",
+      "n/a",
+      "na",
+      "not at the moment",
+      "not at this time.",
+      "no comment all good",
+      "nah i'm good thxs",
+      "a/k",
+      "no.",
+      "not at this time",
+      "not at the moment.",
+    ].includes(text.toLowerCase()));
   const items = [
     makeHeading("Additional Comments", 1),
     makePara(
       `Finally, youth had the option to share any other comments or feedback ` +
       `they had about the Zone. ${nCom} youth provided additional comments.`
     ),
+    makePara(
+      `As in March 2025, most substantive comments were positive and focused on appreciation for Youth Zone staff, coaches, and the support youth receive through the program. Of the ${substantiveCount} comments that provided more than a brief no/none response, many described staff as welcoming, helpful, and attentive, and several youth specifically said the Zone helped them feel safe, supported, or make progress toward their goals.`
+    ),
+    makePara(
+      "A smaller number of comments identified areas for improvement, most often around communication, access to resources such as driver's licensing help, or making activities easier to learn about in advance. A few quotes are included below as examples of the responses received."
+    ),
   ];
-  if (data22.length) {
+  if (commentRows.length) {
     items.push(makeHeading("Comments", 1));
-    const cols = Object.keys(rows22[0] || {}).filter((k) => k !== "_header");
-    const commentKey = cols.includes("Comment") ? "Comment" : cols[cols.length - 1];
-    for (const row of data22) {
+    for (const row of commentRows) {
       const text = String(row[commentKey] ?? "").trim();
       if (text && text !== "nan") items.push(makeBullet(text));
     }
@@ -1254,7 +1418,7 @@ async function main() {
     ...sec_job_barriers(),
     ...sec_left_job(),
     ...sec_transportation(),
-    ...sec_voter_reg(),
+    ...sec_voter_reg(dfCsv),
     ...(await sec_zone_visit()),
     ...sec_program_impact(dfCsv),
     ...sec_respect_environment(),

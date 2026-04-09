@@ -25,14 +25,14 @@ Skill for producing data-driven narrative insights in the annual Auberle / 412 Y
 |---|---|---|
 | Last year's report | attached `.docx` or `report/example/` | Source of narrative voice, insight patterns, benchmark data |
 | This year's analysis | `output/412YZ/analysis_412YZ.xlsx` | Data tables for current cycle |
-| This year's draft report | attached `.docx` or `report/412YZ/report_412YZ.docx` | Current draft to refine |
+| This year's draft report | attached `.docx` or `report/412YZ/report_412YZ_v2.docx` | Current draft to refine |
 | Report generation script | `scripts/05_report_412YZ.js` | Target file for locked-in changes |
 
 ---
 
 ## Section Order
 
-Work through sections in this strict order — each section corresponds to a function in `05_report_412YZ.js`:
+Work through sections in this strict top-level order — each section corresponds to the order used in the `children` array in `05_report_412YZ.js`. Additional charts or tables embedded inside a section do not create a new top-level section and do not change this ordering:
 
 | # | Section | Script function | Analysis sheet(s) |
 |---|---|---|---|
@@ -40,7 +40,7 @@ Work through sections in this strict order — each section corresponds to a fun
 | 1 | Age distribution | `sec_age` | `01_age` |
 | 2 | Gender × Sexual Orientation | `sec_gender_orient` | `02_gender_orient` |
 | 3 | Race/Ethnicity (counted once) | `sec_race` | `03_race_once`, `04_race_multi` |
-| 4 | Coach satisfaction | `sec_coach_satisfaction` | `05_q1` |
+| 4 | Coach satisfaction | `sec_coach_satisfaction_async` (`sec_coach_satisfaction` builds the table inputs) | `05_q1` |
 | 5 | Communication | `sec_communication` | `06_communication` |
 | 6 | Stable Housing | `sec_housing` | `07_housing`, `08_housing_reasons` |
 | 7 | Employment & Education | `sec_education_employment` | `09_education`, `10_employment`, raw CSV |
@@ -65,14 +65,17 @@ For **each** section, execute these steps in order:
 
 ### Step A — Read last year's section
 Load and read the corresponding section in last year's report (attached `.docx` or `report/example/`).
-- Extract the key narrative sentences (1–4 sentences per section is typical).
+- Extract the key narrative sentences.
 - Identify where Arthur inserted data-driven insights (distribution statements, max/min callouts, trend comparisons).
 - Note the exact phrasing pattern (e.g., "About X% of respondents reported…").
 
-### Step B — Read this year's draft narrative + data table
+### Step B — Read this year's draft narrative + section assets
 - Read the corresponding section function in `05_report_412YZ.js`.
-- Read this year's data from the analysis sheet (use `output/412YZ/analysis_412YZ.xlsx`).
-- Identify all numeric findings available: percentages, counts, breakdowns by age/gender.
+- Read this year's data from the analysis workbook (use `output/412YZ/analysis_412YZ.xlsx`), any referenced raw CSV fields, and any charts/tables embedded in that section.
+- Identify all numeric findings available: percentages, counts, breakout patterns by age or subgroup, and any chart-specific comparisons shown in the current section output.
+- Treat the existing order of headings, paragraphs, tables, captions, footnotes, and charts in the section function as the default structure to preserve unless the user explicitly asks to restructure it.
+- When a section mixes multiple survey questions or sub-tables, keep those question boundaries intact; do not reconcile or merge figures that come from different denominators unless the report already does so explicitly.
+- Prefer analysis-sheet values for any claim that should align exactly with a rendered table, and use the raw CSV for supporting subgroup calculations, open-text summaries, or cross-tab checks that are not already represented in the sheet.
 
 ### Step C — Compare: similar or different?
 
@@ -80,7 +83,7 @@ Load and read the corresponding section in last year's report (attached `.docx` 
 
 **Different** = the dominant finding changed materially (e.g., employment rate dropped >5 pp; a new demographic group is now largest; a barrier jumped to #1).
 
-### Step D — Write narrative snippet
+### Step D — Write narrative
 
 **If similar:** Replicate last year's sentence structure, substituting this year's numbers. Keep the same tense, hedging words ("about", "approximately"), and ordering.
 
@@ -93,33 +96,26 @@ Load and read the corresponding section in last year's report (attached `.docx` 
 4. **Concise**: Target 2–4 sentences per section. Never exceed 6.
 5. **No speculation**: Only state what the data shows. Do not infer causes.
 
-### Step E — Output snippet for review
-Present the proposed narrative text as a fenced block:
-
-```
-SECTION: [Section name]
----
-[Proposed narrative text — 2–4 sentences]
----
-YEAR-OVER-YEAR NOTE: [Similar / Changed — brief description if changed]
-```
-
-### Step E2 — LLM refinement pass
-Before showing the snippet to the user, run a self-critique against these criteria and revise once:
+### Step E — LLM refinement pass
+Before updating the script, run a self-critique against these criteria and revise once:
 
 1. **Voice match**: Does it sound like the prior-year report? If not, adjust register (professional but plain, not academic).
 2. **Precision**: Are the numbers pulled from the data table correct? Verify each figure.
 3. **Flow**: Does the narrative lead with the most important finding? Reorder if a supporting detail is leading.
 4. **YoY flag**: If the finding changed materially, is the change called out explicitly with the prior-year value and year label?
 5. **Length**: Is it within 2–4 sentences? Trim anything that restates the table without adding interpretation.
+6. **Section integrity**: Does the narrative preserve the existing section element order and avoid conflating distinct question bases or sub-tables?
 
-Revise the snippet based on this check, then present the **revised** version in Step E's format.
+Revise the narrative based on this check, then use the revised version in the script.
 
-### Step F — Incorporate edits
-Wait for user feedback. Apply any corrections to the snippet before proceeding.
-
-### Step G — Lock into script
+### Step F — Lock into script
 Update the hard-coded string literals inside `makePara()` / `makeBullet()` / `makeHeading()` calls in the corresponding section function in `scripts/05_report_412YZ.js`. Replace only the narrative strings; do not alter table-building logic, data-loading code, or `makeTable()` / `makeCaption()` calls.
+
+### Step G — Generate report for review
+Run the report generation script so the user can review the updated report output directly.
+
+### Step H — Incorporate feedback
+Wait for user feedback on the generated report output. Apply any corrections in the script and regenerate the report as needed.
 
 ---
 
@@ -174,6 +170,9 @@ The script hardcodes Q1 coach satisfaction benchmarks in `Q1_BENCHMARKS` (Sep-19
 - [ ] No sentence speculates on causes not in the survey
 - [ ] Year-over-year flag is present when a key metric changed direction or by ≥5 pp
 - [ ] Running `node scripts/05_report_412YZ.js` produces no errors after changes
+- [ ] The generated report output is ready for user review without a separate snippet-preview step
+- [ ] Narrative claims that should match report tables use the same sheet-based values shown in those tables
+- [ ] Distinct survey questions or sub-table denominators are not blended into a single unsupported claim
 
 ---
 

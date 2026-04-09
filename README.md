@@ -21,10 +21,10 @@ prompts/           # Claude prompt templates
 | `02_compile.py` | Merge extracted records into survey CSVs |
 | `02b_ingest_online_412YZ.py` / `02b_ingest_online_IL.py` | Append SurveyMonkey exports |
 | `03_qa_412YZ.py` / `03_qa_IL.py` | Generate QA logs and reviewer workbooks |
-| `03b_apply_corrections_412YZ.py` | Apply 412YZ QA workbook corrections |
+| `03b_apply_corrections_412YZ.py` / `03b_apply_corrections_IL.py` | Apply QA workbook corrections |
 | `03c_standardize_fields_412YZ.py` | Standardize 412YZ DOB and coach names |
-| `04_analyze_412YZ.py` | Produce the 412YZ analysis workbook |
-| `05_report_412YZ.js` | Generate the active 412YZ report docx |
+| `04_analyze_412YZ.py` / `04_analyze_IL.py` | Produce the analysis workbook and charts |
+| `05_report_412YZ.js` / `05_report_IL.js` | Generate the active report docx |
 
 ## Setup
 

@@ -819,7 +819,52 @@ def sec15_voter_reg(df):
     rows_b.sort(key=lambda r: -r["Total"])
     table_b = pd.DataFrame(rows_b)
 
-    return {"Voter Registration by Age": table_a, "Not Registered Reasons by Age": table_b}
+    eligible = vdf[vdf["q7_registered_to_vote"].isin(["yes", "no"])].copy()
+    gender_rows = []
+    for gender in ["Female", "Male"]:
+        subset = eligible[eligible["gender"].astype(str).str.strip() == gender]
+        n_total_gender = len(subset)
+        n_registered = int((subset["q7_registered_to_vote"] == "yes").sum())
+        gender_rows.append({
+            "Gender": gender,
+            "Registered": n_registered,
+            "Total with Voting Response": n_total_gender,
+            "Percent Registered": pct_str(n_registered, n_total_gender),
+        })
+    table_c = pd.DataFrame(gender_rows)
+
+    reason_rows = eligible[eligible["q7a_not_registered_reasons"].str.strip() != ""].copy()
+    dont_know_how_n = sum(
+        "dont_know_how" in split_pipe(val) for val in reason_rows["q7a_not_registered_reasons"]
+    )
+    inconsistent_n = int(((eligible["q7_registered_to_vote"] == "yes") & (eligible["q7a_not_registered_reasons"].str.strip() != "")).sum())
+    table_d = pd.DataFrame([
+        {
+            "Metric": "Youth providing a reason for not being registered",
+            "Count": len(reason_rows),
+            "Denominator": len(eligible),
+            "Percent": pct_str(len(reason_rows), len(eligible)),
+        },
+        {
+            "Metric": "Youth reporting they do not know how to register",
+            "Count": dont_know_how_n,
+            "Denominator": len(reason_rows),
+            "Percent": pct_str(dont_know_how_n, len(reason_rows)),
+        },
+        {
+            "Metric": "Youth marked registered and also selected a not-registered reason",
+            "Count": inconsistent_n,
+            "Denominator": len(eligible),
+            "Percent": pct_str(inconsistent_n, len(eligible)),
+        },
+    ])
+
+    return {
+        "Voter Registration by Age": table_a,
+        "Not Registered Reasons by Age": table_b,
+        "Registration by Gender (18-23)": table_c,
+        "Voting Narrative Support": table_d,
+    }
 
 
 def sec16_visit(df):
@@ -857,10 +902,68 @@ def sec16_visit(df):
     else:
         ct_c = None
 
+    total_visit_n = int((df["q15_visit_frequency"] != "").sum())
+    weekly_n = int((df["q15_visit_frequency"] == "every_week").sum())
+    monthly_n = int((df["q15_visit_frequency"] == "1_3_times_per_month").sum())
+    less_monthly_n = int((df["q15_visit_frequency"] == "less_than_once_per_month").sum())
+    never_n = int((df["q15_visit_frequency"] == "never").sum())
+    at_least_monthly_n = weekly_n + monthly_n
+
+    visit_support_rows = [
+        {"Metric": "Attending at least monthly", "Count": at_least_monthly_n, "Denominator": total_visit_n, "Percent": pct_str(at_least_monthly_n, total_visit_n)},
+        {"Metric": "Attending every week", "Count": weekly_n, "Denominator": total_visit_n, "Percent": pct_str(weekly_n, total_visit_n)},
+        {"Metric": "Attending 1-3 times per month", "Count": monthly_n, "Denominator": total_visit_n, "Percent": pct_str(monthly_n, total_visit_n)},
+        {"Metric": "Attending less than once per month", "Count": less_monthly_n, "Denominator": total_visit_n, "Percent": pct_str(less_monthly_n, total_visit_n)},
+        {"Metric": "Never visiting downtown Zone", "Count": never_n, "Denominator": total_visit_n, "Percent": pct_str(never_n, total_visit_n)},
+    ]
+    for age in ["16-17 years old", "18-20 years old", "21-23 years old"]:
+        age_total = int(((df["_age"] == age) & (df["q15_visit_frequency"] != "")).sum())
+        age_weekly = int(((df["_age"] == age) & (df["q15_visit_frequency"] == "every_week")).sum())
+        visit_support_rows.append({
+            "Metric": f"{age} attending every week",
+            "Count": age_weekly,
+            "Denominator": age_total,
+            "Percent": pct_str(age_weekly, age_total),
+        })
+    table_d = pd.DataFrame(visit_support_rows)
+
+    frequent_total = len(frequent)
+    infreq_total = len(infreq)
+    reason_counter = Counter()
+    barrier_counter = Counter()
+    for _, row in frequent.iterrows():
+        reason_counter.update(split_pipe(row["q15a_visit_reasons"]))
+    for _, row in infreq.iterrows():
+        barrier_counter.update(split_pipe(row["q15b_visit_barriers"]))
+
+    frequent_18_20 = frequent[frequent["_age"] == "18-20 years old"]
+    frequent_21_23 = frequent[frequent["_age"] == "21-23 years old"]
+    infreq_18_20 = infreq[infreq["_age"] == "18-20 years old"]
+
+    def _count_multi(sub_df, field, code):
+        return int(sum(code in split_pipe(val) for val in sub_df[field]))
+
+    table_e = pd.DataFrame([
+        {"Metric": "Frequent visitors coming to see coach/staff", "Count": reason_counter["see_coach_staff"], "Denominator": frequent_total, "Percent": pct_str(reason_counter["see_coach_staff"], frequent_total)},
+        {"Metric": "Frequent visitors coming for food", "Count": reason_counter["food"], "Denominator": frequent_total, "Percent": pct_str(reason_counter["food"], frequent_total)},
+        {"Metric": "Frequent visitors coming for scheduled activities", "Count": reason_counter["scheduled_activity"], "Denominator": frequent_total, "Percent": pct_str(reason_counter["scheduled_activity"], frequent_total)},
+        {"Metric": "Frequent visitors coming to work toward goals", "Count": reason_counter["work_on_goals"], "Denominator": frequent_total, "Percent": pct_str(reason_counter["work_on_goals"], frequent_total)},
+        {"Metric": "Frequent visitors 21-23 coming for a safe place", "Count": _count_multi(frequent_21_23, "q15a_visit_reasons", "safe_place"), "Denominator": len(frequent_21_23), "Percent": pct_str(_count_multi(frequent_21_23, "q15a_visit_reasons", "safe_place"), len(frequent_21_23))},
+        {"Metric": "Frequent visitors 21-23 coming to escape problems/issues", "Count": _count_multi(frequent_21_23, "q15a_visit_reasons", "escape_problems"), "Denominator": len(frequent_21_23), "Percent": pct_str(_count_multi(frequent_21_23, "q15a_visit_reasons", "escape_problems"), len(frequent_21_23))},
+        {"Metric": "Frequent visitors 18-20 coming for a safe place", "Count": _count_multi(frequent_18_20, "q15a_visit_reasons", "safe_place"), "Denominator": len(frequent_18_20), "Percent": pct_str(_count_multi(frequent_18_20, "q15a_visit_reasons", "safe_place"), len(frequent_18_20))},
+        {"Metric": "Frequent visitors 18-20 coming to escape problems/issues", "Count": _count_multi(frequent_18_20, "q15a_visit_reasons", "escape_problems"), "Denominator": len(frequent_18_20), "Percent": pct_str(_count_multi(frequent_18_20, "q15a_visit_reasons", "escape_problems"), len(frequent_18_20))},
+        {"Metric": "Infrequent/never visitors wanting more activities", "Count": barrier_counter["better_activities"], "Denominator": infreq_total, "Percent": pct_str(barrier_counter["better_activities"], infreq_total)},
+        {"Metric": "Infrequent/never visitors wanting coach invitation", "Count": barrier_counter["coach_invitation"], "Denominator": infreq_total, "Percent": pct_str(barrier_counter["coach_invitation"], infreq_total)},
+        {"Metric": "Infrequent/never visitors wanting more activity information", "Count": barrier_counter["more_info"], "Denominator": infreq_total, "Percent": pct_str(barrier_counter["more_info"], infreq_total)},
+        {"Metric": "Infrequent/never visitors 18-20 wanting coach invitation", "Count": _count_multi(infreq_18_20, "q15b_visit_barriers", "coach_invitation"), "Denominator": len(infreq_18_20), "Percent": pct_str(_count_multi(infreq_18_20, "q15b_visit_barriers", "coach_invitation"), len(infreq_18_20))},
+    ])
+
     return {
         "Visit Frequency by Age": table_a,
         "Visit Reasons (frequent)": ct_b,
         "Visit Barriers (infrequent)": ct_c,
+        "Visit Frequency Narrative Support": table_d,
+        "Visit Reason and Barrier Narrative Support": table_e,
     }
 
 
@@ -982,10 +1085,41 @@ def sec20_banking(df):
     else:
         ct_c = None
 
+    use_bank_method = df["q24_money_methods"].apply(lambda v: "bank_account" in split_pipe(v))
+    use_digital_apps = df["q24_money_methods"].apply(lambda v: "digital_apps" in split_pipe(v))
+    has_acc_no_bank_method = has_acc_df[~use_bank_method[has_acc_df.index]].copy()
+    bills_21_23 = int(sum(
+        "paying_bills" in split_pipe(v)
+        for v in has_acc_df.loc[has_acc_df["_age"] == "21-23 years old", "q26b_account_usage"]
+    ))
+    acc_21_23 = int((has_acc_df["_age"] == "21-23 years old").sum())
+    digital_among_no_bank_method = int(use_digital_apps[has_acc_no_bank_method.index].sum())
+    table_d = pd.DataFrame([
+        {
+            "Metric": "Account holders ages 21-23 using account to pay household bills",
+            "Count": bills_21_23,
+            "Denominator": acc_21_23,
+            "Percent": pct_str(bills_21_23, acc_21_23),
+        },
+        {
+            "Metric": "Account holders not reporting bank account as a money-management method",
+            "Count": len(has_acc_no_bank_method),
+            "Denominator": len(has_acc_df),
+            "Percent": pct_str(len(has_acc_no_bank_method), len(has_acc_df)),
+        },
+        {
+            "Metric": "Those account holders relying on digital apps instead",
+            "Count": digital_among_no_bank_method,
+            "Denominator": len(has_acc_no_bank_method),
+            "Percent": pct_str(digital_among_no_bank_method, len(has_acc_no_bank_method)),
+        },
+    ])
+
     return {
         "Bank Account Status by Age": table_a,
         "Money Methods by Age (Q24)": ct_b,
         "Account Usage by Age (Q26b)": ct_c,
+        "Banking Narrative Support": table_d,
     }
 
 
@@ -1016,7 +1150,25 @@ def sec22_comments(df):
         ["survey_id", "q23_other_comments"]
     ].copy()
     comments.columns = ["Survey ID", "Comment"]
-    return comments.reset_index(drop=True)
+    comments = comments.reset_index(drop=True)
+
+    trivial_comments = {
+        "no", "nope", "none.", "none", "n/a", "na", "not at the moment",
+        "not at this time.", "no comment all good", "nah i'm good thxs", "a/k",
+        "no.", "not at this time", "not at the moment.",
+    }
+    substantive_mask = ~comments["Comment"].str.strip().str.lower().isin(trivial_comments)
+    substantive_n = int(substantive_mask.sum())
+    summary = pd.DataFrame([
+        {"Metric": "Total non-blank comments", "Count": len(comments)},
+        {"Metric": "Substantive comments used for narrative review", "Count": substantive_n},
+        {"Metric": "Brief no/none comments", "Count": int(len(comments) - substantive_n)},
+    ])
+
+    return {
+        "Comment Summary": summary,
+        "Comment Listing": comments,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1112,22 +1264,34 @@ def generate_charts():
     CHARTS_DIR = OUT_PATH.parent / "charts"
     CHARTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    PALETTE = ["#4472C4", "#ED7D31", "#A9D18E", "#FF0000", "#FFC000"]
-    GRID_COLOR = "#E0E0E0"
+    PALETTE = ["#426FB3", "#C67A2A", "#8FB98A", "#B24A3D", "#D2A72C"]
+    GRID_COLOR = "#D9DDE3"
+    TEXT_COLOR = "#1F2933"
+    AXIS_COLOR = "#9AA5B1"
+
+    def _style_ticks(ax, x_size=9, y_size=10):
+        ax.tick_params(axis="x", labelsize=x_size, colors=TEXT_COLOR)
+        ax.tick_params(axis="y", labelsize=y_size, colors=TEXT_COLOR)
 
     def _apply_base_style(ax):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color(AXIS_COLOR)
+        ax.spines["bottom"].set_color(AXIS_COLOR)
         ax.yaxis.grid(False)
-        ax.xaxis.grid(True, color=GRID_COLOR, zorder=0)
+        ax.xaxis.grid(True, color=GRID_COLOR, linewidth=0.8, zorder=0)
         ax.set_axisbelow(True)
+        _style_ticks(ax)
 
     def _apply_hbar_style(ax):
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-        ax.xaxis.grid(True, color=GRID_COLOR, zorder=0)
+        ax.spines["left"].set_color(TEXT_COLOR)
+        ax.spines["bottom"].set_color(AXIS_COLOR)
+        ax.xaxis.grid(True, color=GRID_COLOR, linewidth=0.8, zorder=0)
         ax.yaxis.grid(False)
         ax.set_axisbelow(True)
+        _style_ticks(ax)
 
     def _save(fig, name):
         fig.tight_layout()
@@ -1173,17 +1337,29 @@ def generate_charts():
     if labels1:
         labels1 = labels1[::-1]
         vals1   = vals1[::-1]
-        fig, ax = plt.subplots(figsize=(8, 3.5))
+        fig, ax = plt.subplots(figsize=(7.4, 3.6))
         y_pos = range(len(labels1))
         bars = ax.barh(list(y_pos), vals1, color=PALETTE[0], zorder=3)
         ax.set_yticks(list(y_pos))
         ax.set_yticklabels(labels1, fontsize=10)
         ax.set_xlim(0, 100)
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        ax.set_xlabel("Top-two-box share of respondents", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
         for bar, val in zip(bars, vals1):
-            ax.text(val + 1, bar.get_y() + bar.get_height() / 2,
-                    f"{int(val)}%", va="center", ha="left", fontsize=10)
+            inside_bar = val >= 14
+            x_pos = val - 1.8 if inside_bar else val + 1.2
+            ax.text(
+                x_pos,
+                bar.get_y() + bar.get_height() / 2,
+                f"{int(val)}%",
+                va="center",
+                ha="right" if inside_bar else "left",
+                fontsize=9,
+                fontweight="bold",
+                color="white" if inside_bar else TEXT_COLOR,
+            )
         _save(fig, "chart_01_coach_satisfaction.png")
 
     # ------------------------------------------------------------------
@@ -1466,16 +1642,33 @@ def generate_charts():
     if race_labels:
         paired = sorted(zip(race_counts, race_labels), reverse=True)
         race_counts_s, race_labels_s = zip(*paired)
+        race_total = sum(race_counts_s)
+        race_display_labels = [
+            "Other single\nracial identity" if label == "Other single racial identity" else label
+            for label in race_labels_s
+        ]
 
-        fig, ax = plt.subplots(figsize=(8, 3))
-        y_pos = range(len(race_labels_s))
+        fig, ax = plt.subplots(figsize=(7.4, 3.2))
+        y_pos = range(len(race_display_labels))
         bars = ax.barh(list(y_pos), list(race_counts_s), color=PALETTE[0], zorder=3)
         ax.set_yticks(list(y_pos))
-        ax.set_yticklabels(race_labels_s, fontsize=10)
+        ax.set_yticklabels(race_display_labels, fontsize=10)
+        ax.set_xlim(0, max(race_counts_s) * 1.16)
+        ax.xaxis.set_major_locator(mticker.MaxNLocator(integer=True, nbins=6))
+        ax.set_xlabel("Number of respondents", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
         for bar, cnt in zip(bars, race_counts_s):
-            ax.text(cnt + 0.3, bar.get_y() + bar.get_height() / 2,
-                    str(cnt), va="center", ha="left", fontsize=10)
+            pct = round(100 * cnt / race_total) if race_total else 0
+            ax.text(
+                cnt + (max(race_counts_s) * 0.02),
+                bar.get_y() + bar.get_height() / 2,
+                f"{cnt} ({pct}%)",
+                va="center",
+                ha="left",
+                fontsize=9,
+                fontweight="bold",
+                color=TEXT_COLOR,
+            )
         _save(fig, "chart_06_race_distribution.png")
 
     # ------------------------------------------------------------------
