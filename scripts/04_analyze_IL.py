@@ -24,6 +24,7 @@ from openpyxl.utils import get_column_letter
 matplotlib = importlib.import_module("matplotlib")
 matplotlib.use("Agg")
 plt = importlib.import_module("matplotlib.pyplot")
+np = importlib.import_module("numpy")
 
 
 BASE_DIR = Path(__file__).parent.parent
@@ -701,31 +702,238 @@ def make_employment_chart(df: pd.DataFrame):
 
 
 def make_program_helped_chart(df: pd.DataFrame):
-    if df.empty:
+    """Table-with-embedded-bars chart matching 412YZ chart 12 style.
+
+    Columns: 14-17 years old | 18-23 years old (combined) | Total
+    Base: youth who answered both q11_program_helped and the age question.
+    """
+    TEXT_COLOR = "#1F2933"
+    BAR_FILL = "#5B88C2"
+    HEADER_CLR = "#DCE6F1"
+    BORDER = "#6B7280"
+
+    CHART_AGE_COLS = ["14-17 years old", "18-23 years old"]
+
+    # Restrict to those who answered q11 AND gave a known age
+    answered = df[
+        (df["q11_program_helped"].astype(str).str.strip() != "") &
+        (df["_age"].isin(["14-17 years old", "18-20 years old", "21-23 years old"]))
+    ].copy()
+    if answered.empty:
         return
-    plot_df = df.copy()
-    plot_df = plot_df[plot_df["Total"] > 0].copy()
-    plot_df["Label"] = plot_df.iloc[:, 0].apply(lambda text: fill(str(text), 28))
-    fig_height = max(4.5, 0.42 * len(plot_df))
-    fig, ax = plt.subplots(figsize=(8.6, fig_height))
-    left = [0] * len(plot_df)
-    age_colors = {
-        "14-17 years old": "#355070",
-        "18-20 years old": "#6D597A",
-        "21-23 years old": "#B56576",
-        "Did not answer": "#BFC6D0",
-    }
-    for age in [age for age in AGE_ORDER if age in plot_df.columns]:
-        values = plot_df[age].tolist()
-        ax.barh(plot_df["Label"], values, left=left, color=age_colors[age], label=age)
-        left = [base + value for base, value in zip(left, values)]
-    ax.set_title("Ways youth say the IL program has helped them")
-    ax.set_xlabel("Selections")
-    ax.grid(axis="x", color="#DDDDDD", linewidth=0.8)
-    ax.set_axisbelow(True)
-    ax.legend(frameon=False, fontsize=8, loc="lower right")
-    ax.invert_yaxis()
+
+    # Combine 18-20 and 21-23 into a single bucket
+    answered["_age_chart"] = answered["_age"].apply(
+        lambda a: "18-23 years old" if a in ("18-20 years old", "21-23 years old") else a
+    )
+
+    n_by_col = {col: int((answered["_age_chart"] == col).sum()) for col in CHART_AGE_COLS}
+    n_total = sum(n_by_col.values())
+    if n_total == 0:
+        return
+
+    chart_rows = []
+    for code, label in HELPED_MAP.items():
+        counts_by_col = []
+        total_count = 0
+        for col in CHART_AGE_COLS:
+            col_df = answered[answered["_age_chart"] == col]
+            count = int(sum(code in split_pipe(v) for v in col_df["q11_program_helped"]))
+            counts_by_col.append(count)
+            total_count += count
+        if total_count == 0:
+            continue
+        chart_rows.append({
+            "label": label,
+            "pcts": [
+                100.0 * counts_by_col[i] / n_by_col[col] if n_by_col[col] else 0.0
+                for i, col in enumerate(CHART_AGE_COLS)
+            ],
+            "total_count": total_count,
+            "total_pct": 100.0 * total_count / n_total,
+        })
+    chart_rows.sort(key=lambda r: (-r["total_count"], r["label"]))
+
+    active_ages = CHART_AGE_COLS
+
+    # Pre-wrap labels and compute per-row heights
+    WRAP_WIDTH = 38
+    BASE_CELL_H = 0.052
+    LINE_EXTRA_H = 0.046  # extra height per additional wrapped line
+    wrapped_rows = []
+    for row in chart_rows:
+        display = fill(row["label"], WRAP_WIDTH)
+        n_lines = display.count("\n") + 1
+        row_h = BASE_CELL_H + (n_lines - 1) * LINE_EXTRA_H
+        wrapped_rows.append({**row, "display_label": display, "row_h": row_h})
+    extra_lines = sum(r["row_h"] - BASE_CELL_H for r in wrapped_rows)
+
+    n_data_cols = len(active_ages)
+    fig_h = max(5.4, 1.7 + 0.31 * len(chart_rows) + extra_lines * 6.0)
+    fig, ax = plt.subplots(figsize=(11.0, fig_h))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    fig.patch.set_facecolor("white")
+
+    col_left = 0.02
+    reason_w = 0.30
+    data_w = 0.19
+    total_w = 0.17
+    cell_h = BASE_CELL_H
+    header_h = 0.064
+    top = 0.90
+
+    ax.text(0.5, 0.985,
+            "My Coach or the IL Program has Helped Me To... (by Age)",
+            ha="center", va="top", fontsize=13.5, fontweight="bold", color=TEXT_COLOR)
+
+    # Column x-start positions and widths
+    x_starts = [col_left] + [
+        col_left + reason_w + i * data_w for i in range(n_data_cols)
+    ] + [col_left + reason_w + n_data_cols * data_w]
+    col_widths = [reason_w] + [data_w] * n_data_cols + [total_w]
+    col_labels = ["Age"] + active_ages + ["Total"]
+
+    # Header row
+    y = top - header_h
+    for x0, w, label in zip(x_starts, col_widths, col_labels):
+        fill_clr = "white" if label == "Age" else HEADER_CLR
+        ax.add_patch(plt.Rectangle((x0, y), w, header_h,
+                                   facecolor=fill_clr, edgecolor=BORDER, linewidth=0.7))
+        ax.text(x0 + w / 2, y + header_h / 2, label,
+                ha="center", va="center", fontsize=9.4, color=TEXT_COLOR,
+                fontweight="bold" if label != "Age" else None,
+                style="italic" if label == "Age" else None)
+
+    # Number of Youth row
+    y -= cell_h
+    n_labels = ["Number of Youth"] + [str(n_by_col[col]) for col in active_ages] + [str(n_total)]
+    for x0, w, label in zip(x_starts, col_widths, n_labels):
+        ax.add_patch(plt.Rectangle((x0, y), w, cell_h,
+                                   facecolor="white", edgecolor=BORDER, linewidth=0.7))
+        ax.text(x0 + w / 2, y + cell_h / 2, label,
+                ha="center", va="center", fontsize=10, color=TEXT_COLOR,
+                fontweight="bold" if label != "Number of Youth" else None,
+                style="italic" if label == "Number of Youth" else None)
+
+    # Data + total column descriptors for bar rendering
+    bar_cols = [
+        (col_left + reason_w + i * data_w, data_w, i) for i in range(n_data_cols)
+    ] + [(col_left + reason_w + n_data_cols * data_w, total_w, "total")]
+
+    # Data rows (variable height for wrapped labels)
+    for row in wrapped_rows:
+        rh = row["row_h"]
+        y -= rh
+        ax.add_patch(plt.Rectangle((col_left, y), reason_w, rh,
+                                   facecolor="white", edgecolor=BORDER, linewidth=0.7))
+        ax.text(col_left + 0.006, y + rh / 2, row["display_label"],
+                ha="left", va="center", fontsize=9.5, color=TEXT_COLOR)
+        rh = row["row_h"]
+        for x0, w, idx in bar_cols:
+            ax.add_patch(plt.Rectangle((x0, y), w, rh,
+                                       facecolor="white", edgecolor=BORDER, linewidth=0.7))
+            pct_val = row["total_pct"] if idx == "total" else row["pcts"][idx]
+            if pct_val > 0:
+                bar_margin = 0.003
+                label_reserve = 0.028  # keep this gap clear for the pct label
+                usable_w = w - 2 * bar_margin - label_reserve
+                bar_w = usable_w * min(pct_val / 100.0, 1.0)
+                bar_inner_h = min(cell_h - 0.012, rh * 0.65)
+                ax.add_patch(plt.Rectangle(
+                    (x0 + bar_margin, y + (rh - bar_inner_h) / 2), bar_w, bar_inner_h,
+                    facecolor=BAR_FILL, edgecolor="none"))
+            ax.text(x0 + w - 0.008, y + rh / 2, f"{int(round(pct_val))}%",
+                    ha="right", va="center", fontsize=9.5, color=TEXT_COLOR)
+
     save_chart(fig, "chart_02_program_helped_by_age.png")
+
+
+def make_environment_chart(df: pd.DataFrame):
+    """100% stacked horizontal bar chart for program environment, matching 412YZ chart 14."""
+    TEXT_COLOR = "#1F2933"
+    GRID_COLOR = "#D9DDE3"
+    AXIS_COLOR = "#9AA5B1"
+    env_order = ["5", "4", "3", "2", "1"]
+    env_labels = {"5": "All the time", "4": "Often", "3": "Sometimes", "2": "Rarely", "1": "Never"}
+    env_colors = {
+        "5": "#2E568F",
+        "4": "#2E86AB",
+        "3": "#D9DDE3",
+        "2": "#F4A261",
+        "1": "#C1440E",
+    }
+
+    env_counts = {}
+    env_totals = {}
+    for field, label in ENVIRONMENT_FIELDS:
+        valid = df[df[field].astype(str).str.strip() != ""][field].astype(str)
+        env_totals[label] = len(valid)
+        env_counts[label] = {code: int((valid == code).sum()) for code in env_order}
+
+    active_items = [(f, lbl) for f, lbl in ENVIRONMENT_FIELDS if env_totals.get(lbl, 0) > 0]
+    if not active_items:
+        return
+
+    wrapped_labels = [fill(lbl, 22) for _, lbl in active_items]
+    row_spacing = 0.80  # taller rows to fit two-line labels
+    fig, ax = plt.subplots(figsize=(7.8, 1.0 + len(active_items) * row_spacing))
+    fig.patch.set_facecolor("white")
+    y_pos = np.arange(len(active_items)) * row_spacing
+    lefts = np.zeros(len(active_items))
+    top2_pcts = []
+
+    for _, label in active_items:
+        total = env_totals[label]
+        top2_pcts.append(
+            100 * (env_counts[label]["5"] + env_counts[label]["4"]) / total if total else 0
+        )
+
+    for code in env_order:
+        pcts = []
+        for _, label in active_items:
+            total = env_totals[label]
+            pct_val = 100 * env_counts[label][code] / total if total else 0
+            pcts.append(pct_val)
+        bars = ax.barh(y_pos, pcts, left=lefts, height=0.38,
+                       color=env_colors[code], label=env_labels[code], zorder=3)
+        for i, (bar, pval) in enumerate(zip(bars, pcts)):
+            if pval >= 5:
+                x_text = lefts[i] + pval / 2
+                text_color = "white" if code in ("5", "4", "1") else TEXT_COLOR
+                ax.text(x_text, bar.get_y() + bar.get_height() / 2,
+                        f"{int(round(pval))}%", va="center", ha="center",
+                        fontsize=10, color=text_color)
+        lefts += np.array(pcts)
+
+    for i, top2_pct in enumerate(top2_pcts):
+        y_line = y_pos[i] + 0.30
+        ax.plot([0, top2_pct], [y_line, y_line], color=TEXT_COLOR, linewidth=1)
+        ax.plot([0, 0], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+        ax.plot([top2_pct, top2_pct], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+        ax.text(top2_pct + 1.3, y_line, f"Top-2 {int(round(top2_pct))}%",
+                va="center", ha="left", fontsize=10, color=TEXT_COLOR)
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(wrapped_labels, fontsize=10, color=TEXT_COLOR)
+    ax.set_xlim(0, 100)
+    ax.set_title("How Do Youth Rate the Program Environment?\n(1-5 scale; top-2 shown below each item)",
+                 fontsize=10, fontweight="bold", color=TEXT_COLOR, pad=55)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_color(AXIS_COLOR)
+    ax.spines["bottom"].set_visible(False)
+    ax.xaxis.grid(False)
+    ax.xaxis.set_visible(False)
+    ax.yaxis.grid(False)
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="y", colors=TEXT_COLOR)
+    ax.invert_yaxis()
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.04), ncol=5, fontsize=9, frameon=False,
+              handlelength=0.8, handletextpad=0.3, columnspacing=1.2)
+    save_chart(fig, "chart_04_environment_ratings.png")
 
 
 def make_nps_chart(df: pd.DataFrame):
@@ -797,8 +1005,8 @@ def main():
     wb.save(OUT_PATH)
 
     make_employment_chart(employment_by_school_table(df))
-    helped_tables = program_impact_tables(df)
-    make_program_helped_chart(helped_tables["Program Helped By Age"])
+    make_program_helped_chart(df)
+    make_environment_chart(df)
     nps_data = nps_tables(df)
     make_nps_chart(nps_data["NPS Distribution"])
 

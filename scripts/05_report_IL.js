@@ -23,6 +23,9 @@ const {
   BorderStyle,
   WidthType,
   VerticalAlign,
+  UnderlineType,
+  TableLayoutType,
+  ShadingType,
 } = requireGlobal("docx");
 
 const XLSX = requireGlobal("xlsx");
@@ -101,6 +104,129 @@ const NO_BORDER = {
   left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
   right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
 };
+
+const HDR_FILL = "DCE6F1";
+const SUBROW_FILL = "EEF3F8";
+
+function makeStyledTableCell(text, {
+  width,
+  bold = false,
+  italic = false,
+  shading,
+  columnSpan,
+  align,
+  size = 22,
+  borders,
+} = {}) {
+  return new TableCell({
+    width,
+    columnSpan,
+    margins: { top: 80, bottom: 80, left: 120, right: 120 },
+    borders: borders || NO_BORDER,
+    shading: shading
+      ? { fill: shading, type: ShadingType.CLEAR, color: "auto" }
+      : undefined,
+    verticalAlign: VerticalAlign.CENTER,
+    children: [
+      new Paragraph({
+        alignment: align,
+        children: [
+          new TextRun({
+            text: String(text ?? ""),
+            bold,
+            italic,
+            font: "Calibri",
+            size,
+            underline: { type: UnderlineType.NONE },
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+function makeILCoachTable() {
+  const labelColWidth = 3960;
+  const yearColWidth = 1080;
+  const yearCols = COACH_BENCHMARKS.headers;
+  const fixedWidths = [labelColWidth, ...yearCols.map(() => yearColWidth)];
+
+  const headerTop = new TableRow({
+    children: [
+      makeStyledTableCell("My Coach...", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        bold: true,
+        shading: HDR_FILL,
+      }),
+      makeStyledTableCell("% Often or All the Time", {
+        width: { size: fixedWidths.slice(1).reduce((sum, val) => sum + val, 0), type: WidthType.DXA },
+        bold: true,
+        shading: HDR_FILL,
+        columnSpan: yearCols.length,
+        align: AlignmentType.CENTER,
+      }),
+    ],
+  });
+
+  const headerYears = new TableRow({
+    children: [
+      makeStyledTableCell("", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        shading: HDR_FILL,
+      }),
+      ...yearCols.map((label, idx) => makeStyledTableCell(label, {
+        width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+        bold: true,
+        shading: HDR_FILL,
+        align: AlignmentType.CENTER,
+      })),
+    ],
+  });
+
+  const sampleRow = new TableRow({
+    children: [
+      makeStyledTableCell("n", {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        italic: true,
+        shading: SUBROW_FILL,
+      }),
+      ...COACH_BENCHMARKS.n.map((label, idx) => makeStyledTableCell(label || "", {
+        width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+        italic: true,
+        shading: SUBROW_FILL,
+        align: AlignmentType.CENTER,
+      })),
+    ],
+  });
+
+  const itemRows = Object.entries(COACH_BENCHMARKS.rows).map(([label, values]) =>
+    new TableRow({
+      children: [
+        makeStyledTableCell(label, {
+          width: { size: fixedWidths[0], type: WidthType.DXA },
+        }),
+        ...values.map((value, idx) => makeStyledTableCell(value || "", {
+          width: { size: fixedWidths[idx + 1], type: WidthType.DXA },
+          align: AlignmentType.CENTER,
+        })),
+      ],
+    })
+  );
+
+  return new Table({
+    width: { size: fixedWidths.reduce((sum, val) => sum + val, 0), type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    borders: {
+      top:     { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      bottom:  { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      left:    { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      right:   { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideH: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+      insideV: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
+    },
+    rows: [headerTop, headerYears, sampleRow, ...itemRows],
+  });
+}
 
 const COACH_BENCHMARKS = {
   headers: ["April 2022", "April 2023", "May 2024", "May 2025", "Spring 2026"],
@@ -386,7 +512,7 @@ function sec_coach_relationships() {
       `Compared with May 2025, feeling heard and understood improved from 86% to ${current["Makes me feel heard and understood"] || "97%"}, and values opinions rose from 93% to ${current["Values my opinions about my life"] || "97%"}. Because annual IL response counts are small, the percentages should still be interpreted cautiously, but the overall pattern continues to show very strong youth-coach relationships.`
     ),
     makeCaption("My Coach... Percent Often or All the Time"),
-    makeTable(tableRows, "__none__"),
+    makeILCoachTable(),
     makePara(""),
   ];
 }
@@ -461,16 +587,24 @@ async function sec_employment(dfCsv) {
 async function sec_program_impact(dfCsv) {
   const tables = splitSheet("05_program_impact");
   const helpedAny = dfCsv.filter((row) => String(row.q11_program_helped || "").trim() !== "").length;
-  const future = dfCsv.filter((row) => splitPipe(row.q11_program_helped).includes("future")).length;
-  const problems = dfCsv.filter((row) => splitPipe(row.q11_program_helped).includes("handle_problems")).length;
-  const decisions = dfCsv.filter((row) => splitPipe(row.q11_program_helped).includes("decision_making")).length;
-  const relationships = dfCsv.filter((row) => splitPipe(row.q11_program_helped).includes("positive_relationships")).length;
+  // Chart Total column uses age-known base (n=28) — use same base for narrative top-4 items
+  const ageKnownHelped = dfCsv.filter((row) =>
+    String(row.q11_program_helped || "").trim() !== "" &&
+    ["14_17", "18_20", "21_23"].includes(String(row.age_range || "").trim())
+  );
+  const nChart = ageKnownHelped.length;
+  const future = ageKnownHelped.filter((row) => splitPipe(row.q11_program_helped).includes("future")).length;
+  const problems = ageKnownHelped.filter((row) => splitPipe(row.q11_program_helped).includes("handle_problems")).length;
+  const decisions = ageKnownHelped.filter((row) => splitPipe(row.q11_program_helped).includes("decision_making")).length;
+  const relationships = ageKnownHelped.filter((row) => splitPipe(row.q11_program_helped).includes("positive_relationships")).length;
+  const stayAgreed = dfCsv.filter((row) => String(row.q10_stay_focused || "").trim() === "agree").length;
+  const stayValid = dfCsv.filter((row) => String(row.q10_stay_focused || "").trim() !== "").length;
   const validInd = dfCsv.filter((row) => String(row.q16_gained_independence || "").trim() !== "");
   const indPositive = validInd.filter((row) => ["agree", "somewhat"].includes(String(row.q16_gained_independence || "").trim())).length;
   return [
     makeHeading("Program Impact", 2),
     makePara(
-      `Youth continued to report that the IL program provides both relational support and concrete help. ${helpedAny} of ${dfCsv.length} respondents (${pct(helpedAny, dfCsv.length)}) selected at least one area in which the program had helped them. The most frequently selected areas were thinking about the future (${pct(future, dfCsv.length)}), handling problems (${pct(problems, dfCsv.length)}), decision-making (${pct(decisions, dfCsv.length)}), and establishing positive relationships (${pct(relationships, dfCsv.length)}).`
+      `Youth continued to report that the IL program provides both relational support and concrete help. ${helpedAny} of ${dfCsv.length} respondents (${pct(helpedAny, dfCsv.length)}) selected at least one area in which the program had helped them. The most frequently selected areas were thinking about the future (${pct(future, nChart)}), handling problems (${pct(problems, nChart)}), decision-making (${pct(decisions, nChart)}), and establishing positive relationships (${pct(relationships, nChart)}).`
     ),
     makePara(
       "The age pattern in the chart below suggests younger respondents were especially likely to say the program helped them think about the future and handle problems, while older respondents more often highlighted concrete transition supports such as driver's license help and obtaining vital documents."
@@ -479,7 +613,7 @@ async function sec_program_impact(dfCsv) {
     makeCaption("My Coach or the IL Program Has Helped Me To... (by Age)"),
     makeTable(tables["Program Helped By Age"] || [], "__none__"),
     makePara(
-      `The program also received very strong marks on the two overall outcome questions. Nearly all respondents (${pct(30, dfCsv.length)}) agreed that IL helps them stay focused on their goals, and ${pct(indPositive, validInd.length)} agreed or somewhat agreed that the program has helped them gain independence. This independence item was newly added in 2026, and the early response is strongly positive.`
+      `The program also received very strong marks on the two overall outcome questions. Nearly all respondents (${pct(stayAgreed, stayValid)}) agreed that IL helps them stay focused on their goals, and ${pct(indPositive, validInd.length)} agreed or somewhat agreed that the program has helped them gain independence. This independence item was newly added in 2026, and the early response is strongly positive.`
     ),
     makeCaption("Support from IL Helps Me Stay Focused on My Goals"),
     makeTable(tables["Stay Focused"] || [], "__none__"),
