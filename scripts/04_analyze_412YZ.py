@@ -81,6 +81,20 @@ Q14_LABEL_MAP = {
     "other":                 "Other",
 }
 
+Q14_OTHER_TEXT_MAP = {
+    # → left_unsafe
+    "got a place on my ex and he kept trying to break in": "left_unsafe",
+    "had to leave apt because bug infestation":             "left_unsafe",
+    "the things i put money into at fixed never get fixed within": "left_unsafe",
+    "dangerous family members":                            "left_unsafe",
+    # → evicted_other
+    "my landlord is terrible":                             "evicted_other",
+    "kicked out / house phas-":                            "evicted_other",
+    "lease end, rent increase":                            "evicted_other",
+    "facing possible eviction":                            "evicted_other",
+    "my lease ended and finding other housing was unattainable currently": "evicted_other",
+}
+
 Q8_LABEL_MAP = {
     "yes_full_time":        "Full time",
     "yes_part_time":        "Part time",
@@ -617,6 +631,11 @@ def sec07_housing(df):
 
 
 def sec08_housing_reasons(df):
+    summary_df, _, _ = build_sec08_housing_reasons_outputs(df)
+    return summary_df
+
+
+def build_sec08_housing_reasons_outputs(df):
     UNSTABLE = {"safe_not_90days", "90days_not_safe", "no_place"}
 
     stable_row = {"Reason": "No unstable housing in past 6 months"}
@@ -632,11 +651,94 @@ def sec08_housing_reasons(df):
     header_df = pd.DataFrame([stable_row, unstable_row])
     header_df = header_df.reindex(columns=["Reason"] + AGE_ORDER + ["Total"])
 
-    ct = crosstab_age(df, "q14_housing_instability_reasons", Q14_LABEL_MAP)
-    if not ct.empty:
-        ct = ct.rename(columns={"Label": "Reason"})
-        return pd.concat([header_df, ct], ignore_index=True)
-    return header_df
+    age_counters = {age: Counter() for age in AGE_ORDER}
+    total_counter = Counter()
+    mapping_rows = []
+    residual_counter = Counter()
+    residual_theme_texts = {}
+
+    answered = df[df["q14_housing_instability_reasons"].str.strip() != ""]
+    for _, row in answered.iterrows():
+        age_bucket = row["_age"]
+        base_codes = split_pipe(row["q14_housing_instability_reasons"])
+        other_text = (row["q14_other_text"] or "").strip()
+        normalized_other = " ".join(other_text.lower().split())
+        mapped_code = Q14_OTHER_TEXT_MAP.get(normalized_other, "")
+        has_mapping = bool(mapped_code)
+
+        final_codes = [code for code in base_codes if not (code == "other" and has_mapping)]
+        if mapped_code and mapped_code not in final_codes:
+            final_codes.append(mapped_code)
+
+        for code in final_codes:
+            if age_bucket in age_counters:
+                age_counters[age_bucket][code] += 1
+            total_counter[code] += 1
+
+        if "other" in base_codes:
+            residual_reason = ""
+            residual_theme = ""
+            if not has_mapping:
+                residual_reason = other_text if other_text else "No free-text provided"
+                residual_theme = residual_reason
+                residual_counter[residual_theme] += 1
+                residual_theme_texts.setdefault(residual_theme, set()).add(residual_reason)
+            mapping_rows.append({
+                "survey_id": row["survey_id"],
+                "age_range": age_bucket,
+                "housing_stability": row["q12_housing_stability"],
+                "original_q14_codes": " | ".join(base_codes),
+                "q14_other_text": other_text,
+                "mapped_existing_reason": Q14_LABEL_MAP.get(mapped_code, ""),
+                "final_q14_codes": " | ".join(final_codes),
+                "left_under_other": "Yes" if not has_mapping else "No",
+                "residual_other_reason": residual_reason,
+            })
+
+    ct_rows = []
+    order = list(Q14_LABEL_MAP.keys()) + [k for k in total_counter if k not in Q14_LABEL_MAP]
+    for code in order:
+        n = total_counter.get(code, 0)
+        if n == 0:
+            continue
+        row_data = {"Reason": Q14_LABEL_MAP.get(code, code)}
+        for age in AGE_ORDER:
+            row_data[age] = age_counters[age].get(code, 0)
+        row_data["Total"] = n
+        ct_rows.append(row_data)
+    ct_rows.sort(key=lambda r: (-r["Total"], r["Reason"]))
+
+    if ct_rows:
+        ct_df = pd.DataFrame(ct_rows, columns=["Reason"] + AGE_ORDER + ["Total"])
+        summary_df = pd.concat([header_df, ct_df], ignore_index=True)
+    else:
+        summary_df = header_df
+
+    mapping_df = pd.DataFrame(mapping_rows)
+    repeated_residual_df = pd.DataFrame([
+        {
+            "Residual other reason": reason,
+            "Total Youth": count,
+            "Source texts": " | ".join(sorted(residual_theme_texts.get(reason, set()))),
+        }
+        for reason, count in residual_counter.items() if count > 1
+    ])
+    if not repeated_residual_df.empty:
+        repeated_residual_df = repeated_residual_df.sort_values(
+            by=["Total Youth", "Residual other reason"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
+    return summary_df, mapping_df, repeated_residual_df
+
+
+def sec08_housing_reasons_reference(df):
+    summary_df, mapping_df, repeated_residual_df = build_sec08_housing_reasons_outputs(df)
+    return {
+        "Updated Q14 housing reasons table": summary_df,
+        "Q14 other mapping audit": mapping_df,
+        "Repeated residual other reasons": repeated_residual_df,
+    }
 
 
 def sec09_education(df):
@@ -1845,8 +1947,9 @@ SECTIONS = [
     ("05_q1",             "5. Coach Satisfaction (Q1)",                  sec05_q1),
     ("06_communication",  "6. Communication Frequency & Level (Q2/Q3)", sec06_communication),
     ("07_housing",        "7. Housing Stability (Q12 x Q13)",            sec07_housing),
-    ("08_housing_reasons","8. Housing Instability Reasons (Q14 x Age)",  sec08_housing_reasons),
-    ("09_education",      "9. Education (Q5 + Q5a)",                    sec09_education),
+    ("08_housing_reasons",    "8. Housing Instability Reasons (Q14 x Age)",  sec08_housing_reasons),
+    ("08_housing_reasons_ref", "8A. Housing Reasons Mapping Reference",       sec08_housing_reasons_reference),
+    ("09_education",           "9. Education (Q5 + Q5a)",                    sec09_education),
     ("10_employment",     "10. Employment Status (Q8 x Age)",            sec10_employment),
     ("11_job_tenure",     "11. Job Tenure (Q8a x Full/Part-time)",       sec11_job_tenure),
     ("12_job_barriers",   "12. Job Barriers (Q10)",                      sec12_job_barriers),
@@ -2258,6 +2361,7 @@ def generate_charts(selected_charts=None):
         )
         ax.set_ylim(0, max(max(vals) for vals in freq_matrix.values()) + 6)
         _apply_base_style(ax)
+        ax.xaxis.grid(False)
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03), ncol=3, fontsize=9, frameon=False)
         _save(fig, "chart_04_visit_frequency.png")
 
@@ -2313,12 +2417,13 @@ def generate_charts(selected_charts=None):
         ax.set_xlabel("Reported Frequency Visiting the Youth Zone", fontsize=10, color=TEXT_COLOR, labelpad=10)
         ax.set_title(
             f"The Youth Zone Helps Me Stay\nFocused On My Goals\nMarch 2026, n={len(focus_df)}",
-            fontsize=15,
+            fontsize=11,
             fontweight="bold",
             color=TEXT_COLOR,
             pad=22,
         )
         _apply_base_style(ax)
+        ax.xaxis.grid(False)
         ax.legend(
             loc="upper center",
             bbox_to_anchor=(0.5, 1.04),
@@ -2585,7 +2690,7 @@ def generate_charts(selected_charts=None):
 
     if all(respect_totals.values()):
         fig, ax = plt.subplots(figsize=(8.8, 4.9))
-        y_pos = np.array([0.0, 0.74])
+        y_pos = np.array([0.0, 0.48])
         lefts = np.zeros(len(respect_items))
         top2_pcts = []
 
@@ -2601,33 +2706,33 @@ def generate_charts(selected_charts=None):
                 total = respect_totals[label]
                 pct_val = 100 * respect_counts[label][code] / total if total else 0
                 pcts.append(pct_val)
-            bars = ax.barh(y_pos, pcts, left=lefts, height=0.5, color=respect_colors[code], label=respect_labels[code], zorder=3)
+            bars = ax.barh(y_pos, pcts, left=lefts, height=0.28, color=respect_colors[code], label=respect_labels[code], zorder=3)
             for i, (bar, pval) in enumerate(zip(bars, pcts)):
                 if pval >= 3:
                     x_text = lefts[i] + pval / 2
                     text_color = "white" if code in ("all_the_time", "often", "never") else TEXT_COLOR
                     ax.text(x_text, bar.get_y() + bar.get_height() / 2,
-                            f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color=text_color)
+                            f"{int(round(pval))}%", va="center", ha="center", fontsize=10, color=text_color)
             lefts += np.array(pcts)
 
         for i, top2_pct in enumerate(top2_pcts):
-            y_line = y_pos[i] - 0.34
+            y_line = y_pos[i] + 0.225
             ax.plot([0, top2_pct], [y_line, y_line], color=TEXT_COLOR, linewidth=1)
-            ax.plot([0, 0], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
-            ax.plot([top2_pct, top2_pct], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
-            ax.text(top2_pct + 1.4, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=9, color=TEXT_COLOR)
+            ax.plot([0, 0], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+            ax.plot([top2_pct, top2_pct], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+            ax.text(top2_pct + 1.4, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=10, color=TEXT_COLOR)
 
         ax.set_yticks(y_pos)
         ax.set_yticklabels([label for _, label in respect_items], fontsize=10)
         ax.set_xlim(0, 100)
-        ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
-        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
-        ax.set_xlabel("Percent of respondents", fontsize=10, color=TEXT_COLOR, labelpad=8)
         ax.set_title("How Often Do You Feel You Are Treated with\nRespect and Accepted for Who You Are?",
-                     fontsize=13, fontweight="bold", color=TEXT_COLOR, pad=16)
+                     fontsize=10, fontweight="bold", color=TEXT_COLOR, pad=55)
         _apply_hbar_style(ax)
+        ax.spines["bottom"].set_visible(False)
+        ax.xaxis.grid(False)
+        ax.xaxis.set_visible(False)
         ax.invert_yaxis()
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=5, fontsize=9, frameon=False,
+        ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.04), ncol=5, fontsize=9, frameon=False,
                   handlelength=0.8, handletextpad=0.3, columnspacing=1.2)
         _save(fig, "chart_13_respect_acceptance.png")
 
@@ -2658,8 +2763,8 @@ def generate_charts(selected_charts=None):
         environment_counts[label] = {code: int((valid == code).sum()) for code in environment_order}
 
     if all(environment_totals.values()):
-        fig, ax = plt.subplots(figsize=(9.8, 6.5))
-        y_pos = np.arange(len(environment_items)) * 0.82
+        fig, ax = plt.subplots(figsize=(9.8, 6.0))
+        y_pos = np.arange(len(environment_items)) * 0.62
         lefts = np.zeros(len(environment_items))
         top2_pcts = []
 
@@ -2675,35 +2780,99 @@ def generate_charts(selected_charts=None):
                 total = environment_totals[label]
                 pct_val = 100 * environment_counts[label][code] / total if total else 0
                 pcts.append(pct_val)
-            bars = ax.barh(y_pos, pcts, left=lefts, height=0.52, color=environment_colors[code], label=environment_labels[code], zorder=3)
+            bars = ax.barh(y_pos, pcts, left=lefts, height=0.38, color=environment_colors[code], label=environment_labels[code], zorder=3)
             for i, (bar, pval) in enumerate(zip(bars, pcts)):
                 if pval >= 3:
                     x_text = lefts[i] + pval / 2
                     text_color = "white" if code in ("5", "4", "1") else TEXT_COLOR
                     ax.text(x_text, bar.get_y() + bar.get_height() / 2,
-                            f"{int(round(pval))}%", va="center", ha="center", fontsize=8.8, color=text_color)
+                            f"{int(round(pval))}%", va="center", ha="center", fontsize=10, color=text_color)
             lefts += np.array(pcts)
 
         for i, top2_pct in enumerate(top2_pcts):
-            y_line = y_pos[i] - 0.36
+            y_line = y_pos[i] + 0.26
             ax.plot([0, top2_pct], [y_line, y_line], color=TEXT_COLOR, linewidth=1)
-            ax.plot([0, 0], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
-            ax.plot([top2_pct, top2_pct], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
-            ax.text(top2_pct + 1.3, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=8.8, color=TEXT_COLOR)
+            ax.plot([0, 0], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+            ax.plot([top2_pct, top2_pct], [y_line - 0.04, y_line + 0.04], color=TEXT_COLOR, linewidth=1)
+            ax.text(top2_pct + 1.3, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=10, color=TEXT_COLOR)
 
         ax.set_yticks(y_pos)
-        ax.set_yticklabels([label for _, label in environment_items], fontsize=9.6)
+        ax.set_yticklabels([label for _, label in environment_items], fontsize=10)
+        ax.set_xlim(0, 100)
+        ax.set_title("How Do Youth Rate the Program Environment?\n(1-5 scale; top-2 shown below each item)",
+                     fontsize=10, fontweight="bold", color=TEXT_COLOR, pad=55)
+        _apply_hbar_style(ax)
+        ax.spines["bottom"].set_visible(False)
+        ax.xaxis.grid(False)
+        ax.xaxis.set_visible(False)
+        ax.invert_yaxis()
+        ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.04), ncol=5, fontsize=9, frameon=False,
+                  handlelength=0.8, handletextpad=0.3, columnspacing=1.2)
+        _save(fig, "chart_14_environment_ratings.png")
+
+    # ------------------------------------------------------------------
+    # Chart 15: Primary Way Youth Get to Work — horizontal bar
+    # ------------------------------------------------------------------
+    csv_df_t = pd.read_csv(str(CSV_PATH), encoding="utf-8-sig", dtype=str).fillna("")
+    counter_t = Counter(v.strip() for v in csv_df_t["q9_primary_transport"] if v.strip())
+    total_t = sum(counter_t.values())
+    _Q9_LABEL_MAP = {
+        "public_transit":    "Bus or public transportation",
+        "driving_self":      "Driving myself",
+        "rides_from_others": "Getting rides from someone else",
+        "rideshare":         "RideShare app (Lyft, Uber)",
+        "active_transport":  "Walking, biking, scooter, etc.",
+        "other":             "Other",
+    }
+    _Q9_ORDER = ["public_transit", "driving_self", "rides_from_others", "rideshare", "active_transport", "other"]
+    transport_rows_c = []
+    for code in _Q9_ORDER + [k for k in counter_t if k not in _Q9_ORDER]:
+        n = counter_t.get(code, 0)
+        if n == 0:
+            continue
+        transport_rows_c.append((_Q9_LABEL_MAP.get(code, code), n, 100 * n / total_t if total_t else 0))
+    transport_rows_c.sort(key=lambda r: -r[2])
+
+    if transport_rows_c and total_t > 0:
+        t_labels = [r[0] for r in transport_rows_c]
+        t_vals   = [r[2] for r in transport_rows_c]
+        t_counts = [r[1] for r in transport_rows_c]
+
+        fig, ax = plt.subplots(figsize=(7.0, max(3.0, 0.52 * len(t_labels) + 1.4)))
+        fig.patch.set_facecolor("white")
+        y_pos = range(len(t_labels))
+        bars = ax.barh(list(y_pos), t_vals, color="#185FA5", zorder=3, height=0.62)
+        ax.set_yticks(list(y_pos))
+        ax.set_yticklabels(t_labels, fontsize=11)
+        ax.invert_yaxis()
         ax.set_xlim(0, 100)
         ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
         ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
-        ax.set_xlabel("Percent of respondents", fontsize=10, color=TEXT_COLOR, labelpad=8)
-        ax.set_title("How Do Youth Rate the Program Environment?\n(1-5 scale; top-2 shown below each item)",
-                     fontsize=13, fontweight="bold", color=TEXT_COLOR, pad=16)
+        ax.set_xlabel("Percent of employed youth", fontsize=9, color=TEXT_COLOR, labelpad=8)
         _apply_hbar_style(ax)
-        ax.invert_yaxis()
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=5, fontsize=9, frameon=False,
-                  handlelength=0.8, handletextpad=0.3, columnspacing=1.2, title="Rating")
-        _save(fig, "chart_14_environment_ratings.png")
+        fig.suptitle(
+            "Primary Way Youth Get to Work",
+            x=0.5, y=1.02, ha="center", va="bottom",
+            fontsize=13, fontweight="bold", color="#111",
+        )
+        ax.set_title(
+            f"Among youth who are employed, n={total_t}",
+            loc="left", fontsize=9, color=TEXT_COLOR, pad=10,
+        )
+        for bar, pval, cnt in zip(bars, t_vals, t_counts):
+            inside_bar = pval >= 18
+            x_pos = pval - 1.5 if inside_bar else pval + 1.5
+            ax.text(
+                x_pos,
+                bar.get_y() + bar.get_height() / 2,
+                f"{int(round(pval))}%  (n={cnt})",
+                va="center",
+                ha="right" if inside_bar else "left",
+                fontsize=9.5,
+                fontweight="bold",
+                color="white" if inside_bar else TEXT_COLOR,
+            )
+        _save(fig, "chart_15_primary_transport.png")
 
     # ------------------------------------------------------------------
     # Chart 5: NPS — single 100% stacked horizontal bar

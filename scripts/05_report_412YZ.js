@@ -1126,7 +1126,7 @@ async function sec_housing() {
     makeCaption(cap2),
     makeTable(rows08, "Total youth reporting unstable housing", cap2),
     makePara("\u00b9 Youth could report more than one reason for experiencing unstable housing.", { italic: true }),
-    makePara("Note: \u2018Other\u2019 responses (n=15) included lease expiration or rent increases, unsafe or inadequate housing conditions (e.g., landlord issues, maintenance failures, pest infestation), and domestic or family safety concerns.", { italic: true }),
+    makePara("Note: \u2018Other\u2019 responses (n=6) included a medical reason, voluntarily choosing to leave, never having held a formal lease, placement in a group home, and general life circumstances.", { italic: true }),
     makePara(""),
   ];
 }
@@ -1435,7 +1435,7 @@ function sec_employment_equity() {
   ];
 }
 
-function sec_transportation() {
+async function sec_transportation() {
   const subs = splitSheet("14_transport");
   const cap1 = "Driver\u2019s License Status by Age";
   const cap2 = "Drivers\u2019 Access to a Reliable Vehicle by Age";
@@ -1470,7 +1470,7 @@ function sec_transportation() {
       "in March 2025, and the share driving themselves rose from 9%."
     ),
     makeCaption(cap3),
-    makeTable(subs["Primary Transport"] || [], "Total", cap3),
+    await embedChart("chart_15_primary_transport.png", 5.5),
     makePara(""),
   ];
 }
@@ -1976,7 +1976,7 @@ async function main() {
     ...sec_job_barriers(dfCsv),
     ...sec_left_job(),
     ...sec_employment_equity(),
-    ...sec_transportation(),
+    ...(await sec_transportation()),
     ...sec_voter_reg(dfCsv),
     ...(await sec_zone_visit()),
     ...(await sec_program_impact(dfCsv)),
