@@ -7,6 +7,7 @@ Usage:
     python scripts/04_analyze_412YZ.py
 """
 
+import argparse
 import sys
 from pathlib import Path
 from collections import Counter
@@ -254,6 +255,39 @@ Q15B_LABEL_MAP = {
     "coach_invitation":  "Invitation from my Youth Coach",
     "more_info":         "Knowing more about activities",
     "other":             "Other",
+}
+
+Q15B_OTHER_TEXT_MAP = {
+    "i don't know the location or how to get there i also don't know my 412 youth coach": "more_info",
+    "activities with money": "better_activities",
+}
+
+Q15B_OTHER_TEXT_THEME_MAP = {
+    "quest times": "Unclear or unspecified barrier",
+    "less drama in da space": "Environment or social comfort",
+    "buss passworks": "Transportation or distance",
+    "i am just busy with work and school.": "Work or school schedule conflicts",
+    "housing moving truck help": "Specific service or support need",
+    "possibly help looking for a vehicle in the future": "Transportation or distance",
+    "just being there and chillen and doing what they want me to do": "Activities or atmosphere",
+    "idk": "Unclear or unspecified barrier",
+    "being unsuspended": "Access restrictions",
+    "if my schedule wasn't so busy with school. i also live in turtle creek which is far by bus.": "Work or school schedule conflicts",
+    "if i didn't work so much": "Work or school schedule conflicts",
+    "visit a doctor": "Specific service or support need",
+    "better transportation": "Transportation or distance",
+    "due to being in the military and not stationed in pittsburgh i would have to visit whenever i have leave days saved up to come.": "Transportation or distance",
+    "not being around other people": "Environment or social comfort",
+    "the hours of operation conflict with my job": "Work or school schedule conflicts",
+    "food good food": "Food or amenities",
+    "also it out of my way but i'm very busy": "Transportation or distance",
+    "i don't know. but it's hard when i don't have a reliable ride": "Transportation or distance",
+    "a more stable personal schedule": "Work or school schedule conflicts",
+    "i live in erie": "Transportation or distance",
+    "would love to come but the hours i work don't make it possible": "Work or school schedule conflicts",
+    "i would have all the kids cuz my boyfriend works as well": "Childcare or family responsibilities",
+    "s car ride there and back": "Transportation or distance",
+    "nothing in particular, i'm just antisocial and don't like being in crowded confined spaces": "Environment or social comfort",
 }
 
 Q17_LABEL_MAP = {
@@ -1255,18 +1289,91 @@ def sec16_visit(df):
     if not table_b2.empty:
         table_b2 = table_b2.sort_values(by=["Total Count", "Reason"], ascending=[False, True]).reset_index(drop=True)
 
-    infreq = df[df["q15_visit_frequency"].isin(INFREQUENT_VISIT)]
-    ct_c = crosstab_age(infreq, "q15b_visit_barriers", Q15B_LABEL_MAP)
-    if not ct_c.empty:
-        ct_c = ct_c.rename(columns={"Label": "Visit Barrier (infrequent/never visitors)"})
-        # Add header row showing total respondents per age (matches prior report format)
-        total_row = {"Visit Barrier (infrequent/never visitors)": "Total respondents"}
+    infreq = df[df["q15_visit_frequency"].isin(INFREQUENT_VISIT)].copy()
+    barrier_counter_by_age = {age: Counter() for age in AGE_ORDER}
+    barrier_counter_all = Counter()
+    barrier_mapping_rows = []
+    residual_barrier_counter = Counter()
+    residual_barrier_counter_by_age = {age: Counter() for age in AGE_ORDER}
+    residual_barrier_texts = {}
+    processed_barrier_codes = []
+
+    for _, row in infreq.iterrows():
+        age_bucket = row["_age"]
+        base_codes = split_pipe(row["q15b_visit_barriers"])
+        other_text = (row.get("q15b_other_text") or "").strip()
+        normalized_other = " ".join(other_text.lower().split())
+        mapped_code = Q15B_OTHER_TEXT_MAP.get(normalized_other, "")
+        has_mapping = bool(mapped_code)
+
+        final_codes = [code for code in base_codes if not (code == "other" and has_mapping)]
+        if mapped_code and mapped_code not in final_codes:
+            final_codes.append(mapped_code)
+
+        for code in final_codes:
+            barrier_counter_by_age[age_bucket][code] += 1
+            barrier_counter_all[code] += 1
+        processed_barrier_codes.append(" | ".join(final_codes))
+
+        if "other" in base_codes:
+            residual_reason = ""
+            residual_theme = ""
+            if not has_mapping:
+                residual_reason = other_text if other_text else "No free-text provided"
+                residual_theme = Q15B_OTHER_TEXT_THEME_MAP.get(normalized_other, residual_reason)
+                residual_barrier_counter[residual_theme] += 1
+                residual_barrier_counter_by_age[age_bucket][residual_theme] += 1
+                residual_barrier_texts.setdefault(residual_theme, set()).add(residual_reason)
+            barrier_mapping_rows.append({
+                "survey_id": row["survey_id"],
+                "age_range": age_bucket,
+                "original_q15b_codes": " | ".join(base_codes),
+                "q15b_other_text": other_text,
+                "mapped_existing_barrier": Q15B_LABEL_MAP.get(mapped_code, ""),
+                "final_q15b_codes": " | ".join(final_codes),
+                "left_under_other": "Yes" if not has_mapping else "No",
+                "residual_other_reason": residual_reason,
+                "residual_other_theme": residual_theme,
+            })
+
+    infreq["_q15b_processed"] = processed_barrier_codes
+
+    barrier_rows = []
+    order = list(Q15B_LABEL_MAP.keys()) + [k for k in barrier_counter_all if k not in Q15B_LABEL_MAP]
+    base_barrier_rows = []
+    for code in order:
+        total_count = barrier_counter_all.get(code, 0)
+        if total_count == 0:
+            continue
+        row_data = {"Visit Barrier (infrequent/never visitors)": Q15B_LABEL_MAP.get(code, code)}
         for age in AGE_ORDER:
-            total_row[age] = int((infreq["_age"] == age).sum())
-        total_row["Total"] = len(infreq)
-        ct_c = pd.concat([pd.DataFrame([total_row]), ct_c], ignore_index=True)
-    else:
-        ct_c = None
+            row_data[age] = barrier_counter_by_age[age].get(code, 0)
+        row_data["Total"] = total_count
+        base_barrier_rows.append((code, row_data))
+    base_barrier_rows.sort(key=lambda item: (-item[1]["Total"], item[1]["Visit Barrier (infrequent/never visitors)"]))
+
+    display_residual_themes = [
+        theme for theme, count in residual_barrier_counter.items()
+        if count >= 2 and theme != "No free-text provided"
+    ]
+    display_residual_themes.sort(key=lambda theme: (-residual_barrier_counter[theme], theme))
+
+    total_row = {"Visit Barrier (infrequent/never visitors)": "Total respondents"}
+    for age in AGE_ORDER:
+        total_row[age] = int((infreq["_age"] == age).sum())
+    total_row["Total"] = len(infreq)
+    barrier_rows.append(total_row)
+
+    for code, row_data in base_barrier_rows:
+        barrier_rows.append(row_data)
+        if code == "other":
+            for theme in display_residual_themes:
+                child_row = {"Visit Barrier (infrequent/never visitors)": "    " + theme}
+                for age in AGE_ORDER:
+                    child_row[age] = residual_barrier_counter_by_age[age].get(theme, 0)
+                child_row["Total"] = residual_barrier_counter.get(theme, 0)
+                barrier_rows.append(child_row)
+    ct_c = pd.DataFrame(barrier_rows) if barrier_rows else None
 
     total_visit_n = int((df["q15_visit_frequency"] != "").sum())
     weekly_n = int((df["q15_visit_frequency"] == "every_week").sum())
@@ -1300,7 +1407,7 @@ def sec16_visit(df):
     for _, row in frequent.iterrows():
         reason_counter.update(split_pipe(row["q15a_visit_reasons"]))
     for _, row in infreq.iterrows():
-        barrier_counter.update(split_pipe(row["q15b_visit_barriers"]))
+        barrier_counter.update(split_pipe(row["_q15b_processed"]))
 
     frequent_18_20 = frequent[frequent["_age"] == "18-20 years old"]
     frequent_21_23 = frequent[frequent["_age"] == "21-23 years old"]
@@ -1354,6 +1461,21 @@ def sec16_visit(df):
         {"Metric": "Less than monthly or never visitors unsure about goals", "Count": unsure_less_than_monthly, "Denominator": len(less_than_monthly), "Percent": pct_str(unsure_less_than_monthly, len(less_than_monthly))},
     ])
 
+    barrier_mapping_df = pd.DataFrame(barrier_mapping_rows)
+    repeated_residual_barriers_df = pd.DataFrame([
+        {
+            "Residual other barrier theme": theme,
+            "Total Youth": count,
+            "Source texts": " | ".join(sorted(residual_barrier_texts.get(theme, set()))),
+        }
+        for theme, count in residual_barrier_counter.items() if count > 1
+    ])
+    if not repeated_residual_barriers_df.empty:
+        repeated_residual_barriers_df = repeated_residual_barriers_df.sort_values(
+            by=["Total Youth", "Residual other barrier theme"],
+            ascending=[False, True],
+        ).reset_index(drop=True)
+
     return {
         "Visit Frequency by Age": table_a,
         "Visit Reasons (frequent)": ct_b,
@@ -1363,6 +1485,8 @@ def sec16_visit(df):
         "Visit Reason and Barrier Narrative Support": table_e,
         "Stay Focused by Visit Frequency (Q16)": table_f,
         "Stay Focused Narrative Support": table_g,
+        "Q15b other mapping audit": barrier_mapping_df,
+        "Repeated residual other barriers": repeated_residual_barriers_df,
     }
 
 
@@ -1372,6 +1496,57 @@ def sec17_program_impact(df):
         ct_a = ct_a.rename(columns={"Label": "Program Helped With"})
     else:
         ct_a = None
+
+    q17_age_groups = ["16-17 years old", "18-20 years old", "21-23 years old"]
+    q17_chart_label_map = {
+        "future": "Think about my future",
+        "decision_making": "Make good decisions",
+        "handle_problems": "Figure out how to handle problems",
+        "vital_documents": "Obtain vital documents",
+        "positive_relationships": "Establish positive relationships",
+        "drivers_license": "Get my driver's license",
+        "health_counseling": "Access health care and/or counseling",
+        "housing": "Find or maintain housing",
+        "job": "Get or keep a job",
+        "education": "Finish or further my education",
+        "everyday_skills": "Learn everyday skills",
+        "parenting": "Improve parenting skills",
+        "something_else": "Something else",
+    }
+    q17_chart_order = [
+        "future",
+        "decision_making",
+        "handle_problems",
+        "vital_documents",
+        "positive_relationships",
+        "drivers_license",
+        "health_counseling",
+        "housing",
+        "job",
+        "education",
+        "everyday_skills",
+        "parenting",
+        "something_else",
+    ]
+    q17_known_age = df[(df["q17_program_helped"].astype(str).str.strip() != "") & (df["_age"].isin(q17_age_groups))].copy()
+    q17_n_by_age = {age: len(q17_known_age[q17_known_age["_age"] == age]) for age in q17_age_groups}
+    q17_total_known = sum(q17_n_by_age.values())
+    q17_chart_rows = []
+    for code in q17_chart_order:
+        row = {"Program Helped With": q17_chart_label_map[code]}
+        total_count = 0
+        for age in q17_age_groups:
+            age_df = q17_known_age[q17_known_age["_age"] == age]
+            count = int(sum(code in split_pipe(val) for val in age_df["q17_program_helped"]))
+            row[f"{age} Count"] = count
+            row[age] = pct_str(count, q17_n_by_age[age])
+            total_count += count
+        row["Total Count"] = total_count
+        row["Total"] = pct_str(total_count, q17_total_known)
+        q17_chart_rows.append(row)
+    table_d = pd.DataFrame(q17_chart_rows)
+    if not table_d.empty:
+        table_d = table_d.sort_values(by=["Total Count", "Program Helped With"], ascending=[False, True]).reset_index(drop=True)
 
     q16 = df["q16_stay_focused"].replace("", pd.NA).dropna().value_counts()
     total_q16 = q16.sum()
@@ -1391,6 +1566,7 @@ def sec17_program_impact(df):
 
     return {
         "Program Helped With (Q17) by Age": ct_a,
+        "Program Helped With (Q17) Chart Reference": table_d,
         "Stay Focused (Q16)": table_b,
         "Gained Independence (Q21)": table_c,
     }
@@ -1417,7 +1593,44 @@ def sec18_respect(df):
         for code in RESP_ORDER:
             row_data[RESP_LABELS[code]] = (col == code).sum()
         rows.append(row_data)
-    return pd.DataFrame(rows)
+    table_a = pd.DataFrame(rows)
+
+    rare_never_any = df[df["q18_staff_respect"].isin(["rarely", "never"]) | df["q19_peer_respect"].isin(["rarely", "never"])].copy()
+    known_age_rare_never = rare_never_any[rare_never_any["_age"].isin(["16-17 years old", "18-20 years old", "21-23 years old"])].copy()
+
+    demo_rows = []
+    for age in ["16-17 years old", "18-20 years old", "21-23 years old", "Unknown"]:
+        count = int((rare_never_any["_age"] == age).sum())
+        demo_rows.append({
+            "Age Group": age,
+            "Count": count,
+            "Percent of Rarely/Never Group": pct_str(count, len(rare_never_any)),
+        })
+    demo_rows.append({
+        "Age Group": "Total",
+        "Count": len(rare_never_any),
+        "Percent of Rarely/Never Group": "100%" if len(rare_never_any) else "",
+    })
+    table_b = pd.DataFrame(demo_rows)
+
+    majority_21_23 = int((known_age_rare_never["_age"] == "21-23 years old").sum())
+    total_known = len(known_age_rare_never)
+    under18 = int((known_age_rare_never["_age"] == "16-17 years old").sum())
+    staff_rare_never = df[df["q18_staff_respect"].isin(["rarely", "never"])].copy()
+    peer_rare_never = df[df["q19_peer_respect"].isin(["rarely", "never"])].copy()
+    respect_response_den = int(((df["q18_staff_respect"] != "") | (df["q19_peer_respect"] != "")).sum())
+    table_c = pd.DataFrame([
+        {"Metric": "Youth reporting rarely/never by staff or peers", "Count": len(rare_never_any), "Denominator": respect_response_den, "Percent": pct_str(len(rare_never_any), respect_response_den)},
+        {"Metric": "Known-age rarely/never group ages 21-23", "Count": majority_21_23, "Denominator": total_known, "Percent": pct_str(majority_21_23, total_known)},
+        {"Metric": "Known-age rarely/never group younger than 18", "Count": under18, "Denominator": total_known, "Percent": pct_str(under18, total_known)},
+        {"Metric": "Youth reporting rarely/never by staff", "Count": len(staff_rare_never), "Denominator": int((df["q18_staff_respect"] != "").sum()), "Percent": pct_str(len(staff_rare_never), int((df["q18_staff_respect"] != "").sum()))},
+        {"Metric": "Youth reporting rarely/never by peers", "Count": len(peer_rare_never), "Denominator": int((df["q19_peer_respect"] != "").sum()), "Percent": pct_str(len(peer_rare_never), int((df["q19_peer_respect"] != "").sum()))},
+    ])
+    return {
+        "Respect Summary": table_a,
+        "Rarely/Never Age Breakdown": table_b,
+        "Respect Narrative Support": table_c,
+    }
 
 
 def sec19_environment(df):
@@ -1653,7 +1866,7 @@ SECTIONS = [
 ]
 
 
-def generate_charts():
+def generate_charts(selected_charts=None):
     """Generate chart PNGs from analysis_412YZ.xlsx into output/412YZ/charts/."""
     import matplotlib
     matplotlib.use("Agg")
@@ -1698,11 +1911,30 @@ def generate_charts():
         ax.set_axisbelow(True)
         _style_ticks(ax)
 
+    normalized_selected = None
+    if selected_charts:
+        normalized_selected = set()
+        for name in selected_charts:
+            clean = str(name).strip()
+            if not clean:
+                continue
+            normalized_selected.add(clean)
+            if clean.endswith(".png"):
+                normalized_selected.add(clean[:-4])
+            else:
+                normalized_selected.add(f"{clean}.png")
+
+    written_charts = []
+
     def _save(fig, name):
+        if normalized_selected is not None and name not in normalized_selected and name[:-4] not in normalized_selected:
+            plt.close(fig)
+            return None
         fig.tight_layout()
         out = CHARTS_DIR / name
         fig.savefig(str(out), dpi=150, bbox_inches="tight")
         plt.close(fig)
+        written_charts.append(out)
         return out
 
     def _load_sheet(sheet_name):
@@ -1990,23 +2222,43 @@ def generate_charts():
             cnt = int(((csv_df["_age"] == age_col) & (csv_df["q15_visit_frequency"] == code)).sum())
             freq_matrix[disp].append(cnt)
 
-    print(f"  chart_04 freq_matrix: {freq_matrix}")
-
     if freq_labels_chart:
         n_groups  = len(freq_labels_chart)
         n_bars    = len(VISIT_DISP_COLS)
         width     = 0.25
         x         = np.arange(n_groups)
+        visit_chart_colors = [PALETTE[0], "#6EA0E0", "#A8C5DA"]
+        total_visit_responses = int((csv_df["q15_visit_frequency"] != "").sum())
 
         fig, ax = plt.subplots(figsize=(8, 4.5))
-        for bi, (disp, col) in enumerate(zip(VISIT_DISP_COLS, PALETTE[:n_bars])):
+        for bi, (disp, col) in enumerate(zip(VISIT_DISP_COLS, visit_chart_colors[:n_bars])):
             offsets = x + (bi - (n_bars - 1) / 2) * width
-            ax.bar(offsets, freq_matrix[disp], width=width, color=col, label=disp, zorder=3)
+            bars = ax.bar(offsets, freq_matrix[disp], width=width, color=col, label=disp, zorder=3)
+            for bar, val in zip(bars, freq_matrix[disp]):
+                if val > 0:
+                    ax.text(
+                        bar.get_x() + bar.get_width() / 2,
+                        val + 0.7,
+                        f"{val}",
+                        ha="center",
+                        va="bottom",
+                        fontsize=8.5,
+                        color=TEXT_COLOR,
+                    )
         ax.set_xticks(x)
         ax.set_xticklabels(freq_labels_chart, fontsize=10)
         ax.set_ylabel("Number of Youth", fontsize=10)
+        ax.set_xlabel("Reported Frequency Visiting the Youth Zone", fontsize=10, color=TEXT_COLOR, labelpad=10)
+        ax.set_title(
+            f"Visit Frequency by Age\nMarch 2026, n={total_visit_responses}",
+            fontsize=13,
+            fontweight="bold",
+            color=TEXT_COLOR,
+            pad=14,
+        )
+        ax.set_ylim(0, max(max(vals) for vals in freq_matrix.values()) + 6)
         _apply_base_style(ax)
-        ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=9, frameon=False)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.03), ncol=3, fontsize=9, frameon=False)
         _save(fig, "chart_04_visit_frequency.png")
 
     # ------------------------------------------------------------------
@@ -2082,120 +2334,376 @@ def generate_charts():
     # ------------------------------------------------------------------
     # Chart 11: Visit reasons by frequency — integrated table/chart
     # ------------------------------------------------------------------
-    reason_rows = _load_sheet("16_visit")
-    reason_combo_rows = []
-    in_reason_combo = False
-    for row in reason_rows:
-        values = list(row.values())
-        first = str(values[0]).strip() if values else ""
-        if first == "Visit Reasons by Visit Frequency":
-            in_reason_combo = True
-            continue
-        if in_reason_combo:
-            if len(set(str(v).strip() for v in values if str(v).strip() != "")) == 1 and first and len([v for v in values if str(v).strip() != ""]) == 1:
-                break
-            if first:
-                reason_combo_rows.append(row)
+    reason_combo_order = [
+        ("see_coach_staff", "See my Youth Coach"),
+        ("food", "Eat food"),
+        ("scheduled_activity", "Scheduled activity"),
+        ("work_on_goals", "Work toward my goals"),
+        ("learn_skills", "Learn new things, skills"),
+        ("safe_place", "Safe place"),
+        ("socialize", "Socialize/see friends"),
+        ("escape_problems", "Escape problems elsewhere"),
+        ("service_providers", "Service providers"),
+        ("laundry_shower", "Do laundry, shower, etc."),
+        ("health_counseling", "Health care, counseling"),
+        ("computers", "Access to computers"),
+    ]
+    weekly_df = csv_df[csv_df["q15_visit_frequency"] == "every_week"]
+    monthly_df = csv_df[csv_df["q15_visit_frequency"] == "1_3_times_per_month"]
+    combo_df = csv_df[csv_df["q15_visit_frequency"].isin(["every_week", "1_3_times_per_month"])]
 
-    if reason_combo_rows:
-        header = reason_combo_rows[0]
-        data_rows = reason_combo_rows[1:]
-        parsed_rows = []
-        for row in data_rows:
-            reason = str(row.get(header[list(header.keys())[0]], row.get("Reason", ""))).strip()
-            if not reason:
-                continue
-            weekly_count = int(float(str(row.get("Every week Count", 0) or 0)))
-            monthly_count = int(float(str(row.get("1 to 3 times per month Count", 0) or 0)))
-            total_count = int(float(str(row.get("Total Count", 0) or 0)))
-            weekly_pct = float(str(row.get("Every week Percent", "0")).replace("%", "") or 0)
-            monthly_pct = float(str(row.get("1 to 3 times per month Percent", "0")).replace("%", "") or 0)
-            total_pct = float(str(row.get("Total Percent", "0")).replace("%", "") or 0)
-            parsed_rows.append({
-                "reason": reason,
-                "weekly_count": weekly_count,
-                "monthly_count": monthly_count,
-                "total_count": total_count,
-                "weekly_pct": weekly_pct,
-                "monthly_pct": monthly_pct,
-                "total_pct": total_pct,
-            })
+    def _multi_count(sub_df, field, code):
+        return int(sum(code in split_pipe(val) for val in sub_df[field]))
 
-        weekly_n = int((csv_df["q15_visit_frequency"] == "every_week").sum())
-        monthly_n = int((csv_df["q15_visit_frequency"] == "1_3_times_per_month").sum())
-        combo_total_n = weekly_n + monthly_n
+    parsed_rows = []
+    for code, label in reason_combo_order:
+        weekly_count = _multi_count(weekly_df, "q15a_visit_reasons", code)
+        monthly_count = _multi_count(monthly_df, "q15a_visit_reasons", code)
+        total_count = weekly_count + monthly_count
+        parsed_rows.append({
+            "reason": label,
+            "weekly_count": weekly_count,
+            "monthly_count": monthly_count,
+            "total_count": total_count,
+            "weekly_pct": (100 * weekly_count / len(weekly_df)) if len(weekly_df) else 0,
+            "monthly_pct": (100 * monthly_count / len(monthly_df)) if len(monthly_df) else 0,
+            "total_pct": (100 * total_count / len(combo_df)) if len(combo_df) else 0,
+        })
+    parsed_rows = sorted(parsed_rows, key=lambda row: (-row["total_count"], row["reason"]))
 
-        if parsed_rows and combo_total_n > 0:
-            fig_h = max(4.8, 1.4 + 0.33 * len(parsed_rows))
-            fig, ax = plt.subplots(figsize=(9.6, fig_h))
-            ax.set_xlim(0, 1)
-            ax.set_ylim(0, 1)
-            ax.axis("off")
+    weekly_n = len(weekly_df)
+    monthly_n = len(monthly_df)
+    combo_total_n = len(combo_df)
 
-            left = 0.03
-            reason_w = 0.26
-            week_w = 0.19
-            month_w = 0.21
-            total_w = 0.10
-            cell_h = 0.055
-            top = 0.92
-            header_fill = "#DCE6F1"
-            bar_fill = "#5B88C2"
-            border = "#6B7280"
+    if parsed_rows and combo_total_n > 0:
+        fig_h = max(5.2, 1.8 + 0.33 * len(parsed_rows))
+        fig, ax = plt.subplots(figsize=(10.4, fig_h))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
 
-            ax.text(0.5, 0.985, "What Are the Main Reasons Youth Come to the Youth Zone?",
-                    ha="center", va="top", fontsize=13.5, fontweight="bold", color=TEXT_COLOR)
-            ax.text(0.5, 0.948, "Among youth who reported visiting at least monthly, March 2026",
-                    ha="center", va="top", fontsize=9.5, color=TEXT_COLOR, style="italic")
+        left = 0.03
+        reason_w = 0.22
+        week_w = 0.20
+        month_w = 0.20
+        total_w = 0.20
+        cell_h = 0.052
+        header_h = 0.064
+        top = 0.88
+        header_fill = "#DCE6F1"
+        bar_fill = "#5B88C2"
+        border = "#6B7280"
 
-            y = top - cell_h
-            x_positions = [left, left + reason_w, left + reason_w + week_w, left + reason_w + week_w + month_w]
-            widths = [reason_w, week_w, month_w, total_w]
-            headers = ["Frequency at the Zone", "Every week", "1 to 3 times\nper month", "Total"]
+        ax.text(0.5, 0.988, "What Are the Main Reasons Youth Come to the Youth Zone?",
+                ha="center", va="top", fontsize=13.5, fontweight="bold", color=TEXT_COLOR)
+        ax.text(0.5, 0.944, "Among youth who reported visiting at least monthly, March 2026",
+                ha="center", va="top", fontsize=9.5, color=TEXT_COLOR, style="italic")
 
-            for x0, width, label in zip(x_positions, widths, headers):
-                fill = "white" if label == "Frequency at the Zone" else header_fill
-                ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor=fill, edgecolor=border, linewidth=0.7))
-                ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
-                        fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Frequency at the Zone" else None,
-                        style="italic" if label == "Frequency at the Zone" else None)
+        y = top - header_h
+        x_positions = [left, left + reason_w, left + reason_w + week_w, left + reason_w + week_w + month_w]
+        widths = [reason_w, week_w, month_w, total_w]
+        headers = ["Frequency at the Zone", "Every week", "1 to 3 times per\nmonth", "Total"]
 
+        for x0, width, label in zip(x_positions, widths, headers):
+            fill = "white" if label == "Frequency at the Zone" else header_fill
+            ax.add_patch(plt.Rectangle((x0, y), width, header_h, facecolor=fill, edgecolor=border, linewidth=0.7))
+            ax.text(x0 + width / 2, y + header_h / 2, label, ha="center", va="center",
+                    fontsize=9.4, color=TEXT_COLOR, fontweight="bold" if label != "Frequency at the Zone" else None,
+                    style="italic" if label == "Frequency at the Zone" else None)
+
+        y -= cell_h
+        counts = ["Number of Youth", str(weekly_n), str(monthly_n), str(combo_total_n)]
+        for x0, width, label in zip(x_positions, widths, counts):
+            ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+            ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
+                    fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Number of Youth" else None,
+                    style="italic" if label == "Number of Youth" else None)
+
+        bar_cols = [
+            (left + reason_w, week_w, "weekly_pct", "weekly_count"),
+            (left + reason_w + week_w, month_w, "monthly_pct", "monthly_count"),
+            (left + reason_w + week_w + month_w, total_w, "total_pct", "total_count"),
+        ]
+
+        for row in parsed_rows:
             y -= cell_h
-            counts = ["Number of Youth", str(weekly_n), str(monthly_n), str(combo_total_n)]
-            for x0, width, label in zip(x_positions, widths, counts):
+            ax.add_patch(plt.Rectangle((left, y), reason_w, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+            ax.text(left + 0.006, y + cell_h / 2, row["reason"], ha="left", va="center", fontsize=9.5, color=TEXT_COLOR)
+
+            for x0, width, pct_key, count_key in bar_cols:
                 ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
-                ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
-                        fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Number of Youth" else None,
-                        style="italic" if label == "Number of Youth" else None)
+                pct_val = row[pct_key]
+                if pct_val > 0:
+                    bar_margin = 0.003
+                    usable_w = width - 2 * bar_margin
+                    bar_w = usable_w * min(pct_val / 100, 1)
+                    ax.add_patch(plt.Rectangle((x0 + bar_margin, y + 0.006), bar_w, cell_h - 0.012,
+                                               facecolor=bar_fill, edgecolor="none"))
+                ax.text(x0 + width - 0.008, y + cell_h / 2, f"{int(round(pct_val))}%", ha="right", va="center",
+                        fontsize=9.5, color=TEXT_COLOR)
 
-            bar_cols = [
-                (left + reason_w, week_w, "weekly_pct", "weekly_count"),
-                (left + reason_w + week_w, month_w, "monthly_pct", "monthly_count"),
-                (left + reason_w + week_w + month_w, total_w, "total_pct", "total_count"),
-            ]
+        _save(fig, "chart_11_visit_reasons_combo.png")
 
-            for row in parsed_rows:
-                y -= cell_h
-                ax.add_patch(plt.Rectangle((left, y), reason_w, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
-                ax.text(left + 0.006, y + cell_h / 2, row["reason"], ha="left", va="center", fontsize=9.5, color=TEXT_COLOR)
+    # ------------------------------------------------------------------
+    # Chart 12: Program helped with by age — integrated table/chart
+    # ------------------------------------------------------------------
+    q17_age_groups = ["16-17 years old", "18-20 years old", "21-23 years old"]
+    q17_age_headers = ["16-17 years old", "18-20 years old", "21-23 years old", "Total"]
+    q17_chart_order = [
+        ("future", "Think about my future"),
+        ("decision_making", "Make good decisions"),
+        ("handle_problems", "Figure out how to handle problems"),
+        ("vital_documents", "Obtain vital documents"),
+        ("positive_relationships", "Establish positive relationships"),
+        ("drivers_license", "Get my driver's license"),
+        ("health_counseling", "Access health care and/or counseling"),
+        ("housing", "Find or maintain housing"),
+        ("job", "Get or keep a job"),
+        ("education", "Finish or further my education"),
+        ("everyday_skills", "Learn everyday skills"),
+        ("parenting", "Improve parenting skills"),
+        ("something_else", "Something else"),
+    ]
+    q17_df = csv_df[(csv_df["q17_program_helped"].astype(str).str.strip() != "") & (csv_df["_age"].isin(q17_age_groups))].copy()
+    q17_n_by_age = {age: len(q17_df[q17_df["_age"] == age]) for age in q17_age_groups}
+    q17_total_known = sum(q17_n_by_age.values())
+    q17_rows = []
+    for code, label in q17_chart_order:
+        counts_by_age = []
+        total_count = 0
+        for age in q17_age_groups:
+            age_df = q17_df[q17_df["_age"] == age]
+            count = int(sum(code in split_pipe(val) for val in age_df["q17_program_helped"]))
+            counts_by_age.append(count)
+            total_count += count
+        if total_count == 0:
+            continue
+        q17_rows.append({
+            "label": label,
+            "counts": counts_by_age,
+            "pcts": [100 * counts_by_age[i] / q17_n_by_age[age] if q17_n_by_age[age] else 0 for i, age in enumerate(q17_age_groups)],
+            "total_count": total_count,
+            "total_pct": 100 * total_count / q17_total_known if q17_total_known else 0,
+        })
+    q17_rows = sorted(q17_rows, key=lambda row: (-row["total_count"], row["label"]))
 
-                for x0, width, pct_key, count_key in bar_cols:
-                    ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
-                    pct_val = row[pct_key]
-                    if pct_val > 0:
-                        bar_margin = 0.003
-                        usable_w = width - 2 * bar_margin
-                        bar_w = usable_w * min(pct_val / 100, 1)
-                        ax.add_patch(plt.Rectangle((x0 + bar_margin, y + 0.006), bar_w, cell_h - 0.012,
-                                                   facecolor=bar_fill, edgecolor="none"))
-                    if pct_key == "total_pct":
-                        ax.text(x0 + width / 2, y + cell_h / 2, str(row[count_key]), ha="center", va="center",
-                                fontsize=9.5, color=TEXT_COLOR)
-                    else:
-                        ax.text(x0 + width - 0.008, y + cell_h / 2, f"{int(round(pct_val))}%", ha="right", va="center",
-                                fontsize=9.5, color=TEXT_COLOR)
+    if q17_rows and q17_total_known > 0:
+        fig_h = max(5.4, 1.7 + 0.31 * len(q17_rows))
+        fig, ax = plt.subplots(figsize=(11.0, fig_h))
+        ax.set_xlim(0, 1)
+        ax.set_ylim(0, 1)
+        ax.axis("off")
 
-            _save(fig, "chart_11_visit_reasons_combo.png")
+        left = 0.02
+        reason_w = 0.22
+        data_w = 0.17
+        total_w = 0.17
+        cell_h = 0.052
+        header_h = 0.064
+        top = 0.90
+        header_fill = "#DCE6F1"
+        bar_fill = "#5B88C2"
+        border = "#6B7280"
+
+        ax.text(0.5, 0.985, "My Coach or the Youth Zone has Helped Me To... (by Age)",
+                ha="center", va="top", fontsize=13.5, fontweight="bold", color=TEXT_COLOR)
+
+        y = top - header_h
+        x_positions = [left, left + reason_w, left + reason_w + data_w, left + reason_w + 2 * data_w, left + reason_w + 3 * data_w]
+        widths = [reason_w, data_w, data_w, data_w, total_w]
+        headers = ["Age", *q17_age_headers]
+
+        for x0, width, label in zip(x_positions, widths, headers):
+            fill = "white" if label == "Age" else header_fill
+            ax.add_patch(plt.Rectangle((x0, y), width, header_h, facecolor=fill, edgecolor=border, linewidth=0.7))
+            ax.text(x0 + width / 2, y + header_h / 2, label, ha="center", va="center",
+                    fontsize=9.4, color=TEXT_COLOR, fontweight="bold" if label != "Age" else None,
+                    style="italic" if label == "Age" else None)
+
+        y -= cell_h
+        counts = ["Number of Youth", str(q17_n_by_age[q17_age_groups[0]]), str(q17_n_by_age[q17_age_groups[1]]), str(q17_n_by_age[q17_age_groups[2]]), str(q17_total_known)]
+        for x0, width, label in zip(x_positions, widths, counts):
+            ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+            ax.text(x0 + width / 2, y + cell_h / 2, label, ha="center", va="center",
+                    fontsize=10, color=TEXT_COLOR, fontweight="bold" if label != "Number of Youth" else None,
+                    style="italic" if label == "Number of Youth" else None)
+
+        bar_cols = [
+            (left + reason_w, data_w, 0),
+            (left + reason_w + data_w, data_w, 1),
+            (left + reason_w + 2 * data_w, data_w, 2),
+            (left + reason_w + 3 * data_w, total_w, "total"),
+        ]
+
+        for row in q17_rows:
+            y -= cell_h
+            ax.add_patch(plt.Rectangle((left, y), reason_w, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+            ax.text(left + 0.006, y + cell_h / 2, row["label"], ha="left", va="center", fontsize=9.5, color=TEXT_COLOR)
+
+            for x0, width, idx in bar_cols:
+                ax.add_patch(plt.Rectangle((x0, y), width, cell_h, facecolor="white", edgecolor=border, linewidth=0.7))
+                pct_val = row["total_pct"] if idx == "total" else row["pcts"][idx]
+                if pct_val > 0:
+                    bar_margin = 0.003
+                    usable_w = width - 2 * bar_margin
+                    bar_w = usable_w * min(pct_val / 100, 1)
+                    ax.add_patch(plt.Rectangle((x0 + bar_margin, y + 0.006), bar_w, cell_h - 0.012,
+                                               facecolor=bar_fill, edgecolor="none"))
+                ax.text(x0 + width - 0.008, y + cell_h / 2, f"{int(round(pct_val))}%", ha="right", va="center",
+                        fontsize=9.5, color=TEXT_COLOR)
+
+        _save(fig, "chart_12_program_helped_combo.png")
+
+    # ------------------------------------------------------------------
+    # Chart 13: Respect and acceptance by staff vs peers — 100% stacked
+    # ------------------------------------------------------------------
+    respect_order = ["all_the_time", "often", "sometimes", "rarely", "never"]
+    respect_labels = {
+        "all_the_time": "All the time",
+        "often": "Often",
+        "sometimes": "Sometimes",
+        "rarely": "Rarely",
+        "never": "Never",
+    }
+    respect_colors = {
+        "all_the_time": "#2E568F",
+        "often": "#2E86AB",
+        "sometimes": "#D9DDE3",
+        "rarely": "#F4A261",
+        "never": "#C1440E",
+    }
+    respect_items = [
+        ("q18_staff_respect", "By Staff"),
+        ("q19_peer_respect", "By Peers"),
+    ]
+    respect_counts = {}
+    respect_totals = {}
+    for field, label in respect_items:
+        valid = csv_df[csv_df[field].astype(str).str.strip() != ""][field]
+        respect_totals[label] = len(valid)
+        respect_counts[label] = {code: int((valid == code).sum()) for code in respect_order}
+
+    if all(respect_totals.values()):
+        fig, ax = plt.subplots(figsize=(8.8, 4.9))
+        y_pos = np.array([0.0, 0.74])
+        lefts = np.zeros(len(respect_items))
+        top2_pcts = []
+
+        for _, label in respect_items:
+            total = respect_totals[label]
+            top2_pcts.append(
+                100 * (respect_counts[label]["all_the_time"] + respect_counts[label]["often"]) / total if total else 0
+            )
+
+        for code in respect_order:
+            pcts = []
+            for _, label in respect_items:
+                total = respect_totals[label]
+                pct_val = 100 * respect_counts[label][code] / total if total else 0
+                pcts.append(pct_val)
+            bars = ax.barh(y_pos, pcts, left=lefts, height=0.5, color=respect_colors[code], label=respect_labels[code], zorder=3)
+            for i, (bar, pval) in enumerate(zip(bars, pcts)):
+                if pval >= 3:
+                    x_text = lefts[i] + pval / 2
+                    text_color = "white" if code in ("all_the_time", "often", "never") else TEXT_COLOR
+                    ax.text(x_text, bar.get_y() + bar.get_height() / 2,
+                            f"{int(round(pval))}%", va="center", ha="center", fontsize=9, color=text_color)
+            lefts += np.array(pcts)
+
+        for i, top2_pct in enumerate(top2_pcts):
+            y_line = y_pos[i] - 0.34
+            ax.plot([0, top2_pct], [y_line, y_line], color=TEXT_COLOR, linewidth=1)
+            ax.plot([0, 0], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
+            ax.plot([top2_pct, top2_pct], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
+            ax.text(top2_pct + 1.4, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=9, color=TEXT_COLOR)
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([label for _, label in respect_items], fontsize=10)
+        ax.set_xlim(0, 100)
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        ax.set_xlabel("Percent of respondents", fontsize=10, color=TEXT_COLOR, labelpad=8)
+        ax.set_title("How Often Do You Feel You Are Treated with\nRespect and Accepted for Who You Are?",
+                     fontsize=13, fontweight="bold", color=TEXT_COLOR, pad=16)
+        _apply_hbar_style(ax)
+        ax.invert_yaxis()
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=5, fontsize=9, frameon=False,
+                  handlelength=0.8, handletextpad=0.3, columnspacing=1.2)
+        _save(fig, "chart_13_respect_acceptance.png")
+
+    # ------------------------------------------------------------------
+    # Chart 14: Program environment (Q20) — 100% stacked, top-2 shown
+    # ------------------------------------------------------------------
+    environment_order = ["5", "4", "3", "2", "1"]
+    environment_labels = {
+        "5": "All the time",
+        "4": "Often",
+        "3": "Sometimes",
+        "2": "Rarely",
+        "1": "Never",
+    }
+    environment_colors = {
+        "5": respect_colors["all_the_time"],
+        "4": respect_colors["often"],
+        "3": respect_colors["sometimes"],
+        "2": respect_colors["rarely"],
+        "1": respect_colors["never"],
+    }
+    environment_items = list(Q20_FIELDS)
+    environment_counts = {}
+    environment_totals = {}
+    for field, label in environment_items:
+        valid = csv_df[csv_df[field].astype(str).str.strip() != ""][field].astype(str).str.replace(r"\.0$", "", regex=True)
+        environment_totals[label] = len(valid)
+        environment_counts[label] = {code: int((valid == code).sum()) for code in environment_order}
+
+    if all(environment_totals.values()):
+        fig, ax = plt.subplots(figsize=(9.8, 6.5))
+        y_pos = np.arange(len(environment_items)) * 0.82
+        lefts = np.zeros(len(environment_items))
+        top2_pcts = []
+
+        for _, label in environment_items:
+            total = environment_totals[label]
+            top2_pcts.append(
+                100 * (environment_counts[label]["5"] + environment_counts[label]["4"]) / total if total else 0
+            )
+
+        for code in environment_order:
+            pcts = []
+            for _, label in environment_items:
+                total = environment_totals[label]
+                pct_val = 100 * environment_counts[label][code] / total if total else 0
+                pcts.append(pct_val)
+            bars = ax.barh(y_pos, pcts, left=lefts, height=0.52, color=environment_colors[code], label=environment_labels[code], zorder=3)
+            for i, (bar, pval) in enumerate(zip(bars, pcts)):
+                if pval >= 3:
+                    x_text = lefts[i] + pval / 2
+                    text_color = "white" if code in ("5", "4", "1") else TEXT_COLOR
+                    ax.text(x_text, bar.get_y() + bar.get_height() / 2,
+                            f"{int(round(pval))}%", va="center", ha="center", fontsize=8.8, color=text_color)
+            lefts += np.array(pcts)
+
+        for i, top2_pct in enumerate(top2_pcts):
+            y_line = y_pos[i] - 0.36
+            ax.plot([0, top2_pct], [y_line, y_line], color=TEXT_COLOR, linewidth=1)
+            ax.plot([0, 0], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
+            ax.plot([top2_pct, top2_pct], [y_line - 0.05, y_line + 0.05], color=TEXT_COLOR, linewidth=1)
+            ax.text(top2_pct + 1.3, y_line, f"Top-2 {int(round(top2_pct))}%", va="center", ha="left", fontsize=8.8, color=TEXT_COLOR)
+
+        ax.set_yticks(y_pos)
+        ax.set_yticklabels([label for _, label in environment_items], fontsize=9.6)
+        ax.set_xlim(0, 100)
+        ax.xaxis.set_major_locator(mticker.MultipleLocator(20))
+        ax.xaxis.set_major_formatter(mticker.FuncFormatter(lambda x, _: f"{int(x)}%"))
+        ax.set_xlabel("Percent of respondents", fontsize=10, color=TEXT_COLOR, labelpad=8)
+        ax.set_title("How Do Youth Rate the Program Environment?\n(1-5 scale; top-2 shown below each item)",
+                     fontsize=13, fontweight="bold", color=TEXT_COLOR, pad=16)
+        _apply_hbar_style(ax)
+        ax.invert_yaxis()
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.12), ncol=5, fontsize=9, frameon=False,
+                  handlelength=0.8, handletextpad=0.3, columnspacing=1.2, title="Rating")
+        _save(fig, "chart_14_environment_ratings.png")
 
     # ------------------------------------------------------------------
     # Chart 5: NPS — single 100% stacked horizontal bar
@@ -2409,13 +2917,24 @@ def generate_charts():
     # ------------------------------------------------------------------
     # Summary
     # ------------------------------------------------------------------
-    print(f"\nCharts written to {CHARTS_DIR}:")
-    for png in sorted(CHARTS_DIR.glob("chart_0*.png")):
+    if normalized_selected is not None:
+        print(f"\nSelected charts written to {CHARTS_DIR}:")
+    else:
+        print(f"\nCharts written to {CHARTS_DIR}:")
+    for png in sorted(written_charts, key=lambda path: path.name):
         size_kb = png.stat().st_size / 1024
         print(f"  {png.name}  ({size_kb:.1f} KB)")
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--charts",
+        nargs="+",
+        help="Optional list of chart names to regenerate, e.g. chart_10_stay_focused_visit_frequency or chart_10_stay_focused_visit_frequency.png",
+    )
+    args = parser.parse_args()
+
     if not CSV_PATH.exists():
         print(f"CSV not found: {CSV_PATH}")
         sys.exit(1)
@@ -2440,7 +2959,7 @@ def main():
     wb.save(str(OUT_PATH))
     print(f"\nSaved: {OUT_PATH}")
 
-    generate_charts()
+    generate_charts(args.charts)
 
 
 if __name__ == "__main__":

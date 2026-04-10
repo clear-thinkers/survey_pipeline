@@ -240,12 +240,13 @@ function makeStyledTableCell(text, {
   align,
   indentLeft = 0,
   size = 22,
+  borders,
 } = {}) {
   return new TableCell({
     width,
     columnSpan,
     margins: { top: 80, bottom: 80, left: 120, right: 120 },
-    borders: NO_BORDER,
+    borders: borders || NO_BORDER,
     shading: shading
       ? { fill: shading, type: ShadingType.CLEAR, color: "auto" }
       : undefined,
@@ -354,6 +355,148 @@ function makeCoachSatisfactionTable(dataRows, currN, captionText = "") {
       insideV: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
     },
     rows: [headerTop, headerYears, sampleRow, ...itemRows],
+  });
+}
+
+const LIGHT_TABLE_BORDER = { style: BorderStyle.SINGLE, size: 4, color: "808080" };
+const BANKING_HIGHLIGHT_FILL = "FBE4D5";
+
+function makeCellBorders({ top = false, bottom = false, left = false, right = false } = {}) {
+  return {
+    top: top ? LIGHT_TABLE_BORDER : NO_BORDER.top,
+    bottom: bottom ? LIGHT_TABLE_BORDER : NO_BORDER.bottom,
+    left: left ? LIGHT_TABLE_BORDER : NO_BORDER.left,
+    right: right ? LIGHT_TABLE_BORDER : NO_BORDER.right,
+  };
+}
+
+function getBankingTableWidths(colCount) {
+  if (colCount === 6) return [3510, 1170, 1260, 1170, 920, 920];
+  if (colCount === 7) return [3150, 1050, 1050, 1050, 1050, 800, 800];
+  const firstColWidth = 3200;
+  const remainder = 8950 - firstColWidth;
+  const otherWidth = Math.floor(remainder / Math.max(colCount - 1, 1));
+  const widths = [firstColWidth, ...Array(Math.max(colCount - 1, 0)).fill(otherWidth)];
+  const used = widths.reduce((sum, value) => sum + value, 0);
+  widths[widths.length - 1] += 8950 - used;
+  return widths;
+}
+
+function makeBankingTable(rows, captionText = "", {
+  highlightLabel,
+  italicLabels = new Set(),
+} = {}) {
+  if (!rows || rows.length === 0) return new Paragraph({ text: "" });
+
+  const cols = Object.keys(rows[0]).filter((k) => k !== "_header");
+  const fixedWidths = captionText && TABLE_WIDTHS[captionText]
+    ? TABLE_WIDTHS[captionText]
+    : getBankingTableWidths(cols.length);
+  const totalIdx = cols.findIndex((col) => String(col).trim().toLowerCase() === "total");
+  const percentIdx = cols.findIndex((col) => /^percent/i.test(String(col).trim()));
+  const ageColsEnd = totalIdx === -1 ? cols.length : totalIdx;
+  const ageCols = cols.slice(1, ageColsEnd);
+  const trailingCols = cols.slice(ageColsEnd);
+  const normalize = (value) => String(value ?? "").trim().toLowerCase();
+  const firstTrailingIdx = totalIdx === -1 ? cols.length : totalIdx;
+  const labelSeparatorIdx = ageColsEnd - 1;
+
+  const makeRow = (cellConfigs) => new TableRow({
+    children: cellConfigs.map((cell) => makeStyledTableCell(cell.text, cell.options)),
+  });
+
+  const topHeaderCells = [
+    {
+      text: "",
+      options: {
+        width: { size: fixedWidths[0], type: WidthType.DXA },
+        borders: makeCellBorders({ bottom: true }),
+      },
+    },
+    {
+      text: "Age",
+      options: {
+        width: { size: fixedWidths.slice(1, ageColsEnd).reduce((sum, value) => sum + value, 0), type: WidthType.DXA },
+        columnSpan: ageCols.length,
+        italic: true,
+        align: AlignmentType.LEFT,
+        borders: makeCellBorders({ bottom: true }),
+      },
+    },
+  ];
+
+  trailingCols.forEach((_, trailingIdx) => {
+    const colIdx = firstTrailingIdx + trailingIdx;
+    topHeaderCells.push({
+      text: "",
+      options: {
+        width: { size: fixedWidths[colIdx], type: WidthType.DXA },
+        borders: makeCellBorders({ bottom: true, right: colIdx < cols.length - 1 }),
+      },
+    });
+  });
+
+  const headerCells = cols.map((col, colIdx) => ({
+    text: colIdx === 0 ? "" : col,
+    options: {
+      width: { size: fixedWidths[colIdx], type: WidthType.DXA },
+      shading: HDR_FILL,
+      bold: colIdx > 0,
+      align: colIdx === 0 ? AlignmentType.LEFT : AlignmentType.CENTER,
+      borders: makeCellBorders({
+        bottom: true,
+        right: colIdx === labelSeparatorIdx || colIdx === totalIdx,
+      }),
+    },
+  }));
+
+  const dataRows = rows.filter((row) => !row._header).map((rowObj) => {
+    const label = String(rowObj[cols[0]] ?? "").trim();
+    const isYouthCount = label === "Number of Youth";
+    const isHighlight = highlightLabel && normalize(label) === normalize(highlightLabel);
+
+    return new TableRow({
+      children: cols.map((col, colIdx) => {
+        let text = String(rowObj[col] ?? "");
+        if (colIdx === 0 && isHighlight && /^currently have a bank account$/i.test(text)) {
+          text = `${text}:`;
+        }
+
+        const isLabelCell = colIdx === 0;
+        const fill = isYouthCount ? HDR_FILL : (isHighlight ? BANKING_HIGHLIGHT_FILL : undefined);
+        const align = isLabelCell ? AlignmentType.LEFT : AlignmentType.CENTER;
+        const italic = isLabelCell && (isYouthCount || italicLabels.has(label));
+        const bold = isYouthCount || isHighlight;
+        const indentLeft = isLabelCell && italicLabels.has(label) ? 240 : 0;
+
+        return makeStyledTableCell(text, {
+          width: { size: fixedWidths[colIdx], type: WidthType.DXA },
+          shading: fill,
+          bold,
+          italic,
+          indentLeft,
+          align,
+          borders: makeCellBorders({
+            bottom: true,
+            right: colIdx === labelSeparatorIdx || colIdx === totalIdx,
+          }),
+        });
+      }),
+    });
+  });
+
+  return new Table({
+    width: { size: fixedWidths.reduce((sum, value) => sum + value, 0), type: WidthType.DXA },
+    layout: TableLayoutType.FIXED,
+    borders: {
+      top: NO_BORDER.top,
+      bottom: NO_BORDER.bottom,
+      left: NO_BORDER.left,
+      right: NO_BORDER.right,
+      insideH: NO_BORDER.top,
+      insideV: NO_BORDER.left,
+    },
+    rows: [makeRow(topHeaderCells), makeRow(headerCells), ...dataRows],
   });
 }
 
@@ -717,16 +860,16 @@ function sec_title() {
     makePara(""),
     makePara(
       "All individuals active with the 412 Youth Zone had the opportunity to " +
-      "participate in a survey in early 2026. Surveys were administered on paper " +
+      "participate in a survey in early March 2026. Surveys were administered on paper " +
       "and online."
     ),
     new Paragraph({
       spacing: BODY_PARAGRAPH_SPACING,
       children: [
         new TextRun({ text: `${N_RESPONDENTS} unique youth (of `, font: "Calibri", size: 22 }),
-        new TextRun({ text: "[TOTAL ACTIVE \u2014 fill in denominator]", highlight: "yellow", bold: true, font: "Calibri", size: 22 }),
+        new TextRun({ text: "840", font: "Calibri", size: 22 }),
         new TextRun({ text: " total active) responded to the survey, for a response rate of ", font: "Calibri", size: 22 }),
-        new TextRun({ text: "[RESPONSE RATE %]", highlight: "yellow", bold: true, font: "Calibri", size: 22 }),
+        new TextRun({ text: "24%", font: "Calibri", size: 22 }),
         new TextRun({ text: ". Most respondents were age 18 or older. About half (49%) of the respondents who reported their age were between 18 and 20 years old, and 40% were 21 to 23 years old. Only 10% were 16 or 17 years old, down from 16% in 2025.", font: "Calibri", size: 22 }),
       ],
     }),
@@ -1394,7 +1537,8 @@ function sec_voter_reg(dfCsv) {
     makePara(
       `${dontKnowHowCount} of the ${reasonRows.length} youth who provided a reason (${pctDontKnowHow}) said they did not know how to register, and ${inconsistentRegistered === 0 ? "unlike March 2025, no respondents in the current data reported being registered while also selecting a reason for not being registered" : `${inconsistentRegistered} respondents reported being registered while also selecting a reason for not being registered`}.`
     ),
-    await embedChart("chart_11_visit_reasons_combo.png", 7.1),
+    makeCaption(cap2),
+    makeTable(dfReasons, "__none__", cap2),
     makePara(""),
   ];
 }
@@ -1496,8 +1640,7 @@ async function sec_zone_visit() {
       `Food (${pctFood}) and scheduled activities (${pctScheduled}) were also among the most common reasons for coming this year, ahead of working toward goals (${pctGoals}). ` +
       `Among frequent visitors ages 21 to 23, ${pctSafe21to23} reported coming to be in a safe place and the same share reported coming to escape problems or issues, compared with ${pctSafe18to20} and ${pctEscape18to20}, respectively, of frequent visitors ages 18 to 20.`
     ),
-    makeCaption(cap2),
-    makeTable(dfReasons, "__none__", cap2),
+    await embedChart("chart_11_visit_reasons_combo.png", 7.1),
     makePara(
       `For youth who never visit the Zone, or visit less than monthly, the most common response for what would make them want to come more frequently was more activities that interest them (${pctActivities}), followed closely by an invitation from their Youth Coach (${pctInvite}) and knowing more about activities (${pctInfo}). ` +
       `An invitation from a coach was especially salient for 18- to 20-year-olds, selected by ${invite18to20} of ${infrequent18to20} infrequent visitors in that age group. Open-text \"other\" responses most often referenced work or school schedules, transportation, and distance from the Zone.`
@@ -1508,51 +1651,110 @@ async function sec_zone_visit() {
   ];
 }
 
-function sec_program_impact(dfCsv) {
+async function sec_program_impact(dfCsv) {
   const helpedAny = dfCsv.filter((r) => (r.q17_program_helped || "").trim() !== "").length;
   const pctHelped = pct(helpedAny, dfCsv.length);
-  const q16Total  = dfCsv.filter((r) => (r.q16_stay_focused || "") !== "").length;
-  const q16Agree  = dfCsv.filter((r) => ["agree","somewhat_agree"].includes(r.q16_stay_focused)).length;
-  const pctQ16    = pct(q16Agree, q16Total);
+  const helpedTwoPlus = dfCsv.filter((r) => {
+    const parts = String(r.q17_program_helped || "").split("|").map((t) => t.trim()).filter(Boolean);
+    return parts.length >= 2;
+  }).length;
+  const pctHelpedTwoPlus = pct(helpedTwoPlus, dfCsv.length);
+  const noQ17 = dfCsv.filter((r) => (r.q17_program_helped || "").trim() === "");
+  const limitedContactCount = noQ17.filter((r) => {
+    const combined = `${r.q17_none_explain_text || ""} ${r.q23_other_comments || ""}`.toLowerCase();
+    return [
+      "just joined",
+      "first time",
+      "not much opportunity",
+      "don't know my youth coach",
+      "dont know my youth coach",
+    ].some((term) => combined.includes(term));
+  }).length;
 
   const subs = splitSheet("17_impact");
   let dfQ17  = subs["Program Helped With (Q17) by A"] || [];
+  const chartRows = (subs["Program Helped With (Q17) Chart Reference"] || []).filter((r) => !r._header);
   if (!dfQ17.length) {
     const key = Object.keys(subs).find((k) => k.startsWith("Program Helped"));
     if (key) dfQ17 = subs[key];
   }
+  const chartPct = (label, col = "Total") => {
+    const row = chartRows.find((r) => firstCol(r) === label);
+    return row?.[col] || "[PLACEHOLDER]";
+  };
+  const pctFutureTotal = chartPct("Think about my future");
+  const pctProblemsTotal = chartPct("Figure out how to handle problems");
+  const pctVitalDocsTotal = chartPct("Obtain vital documents");
+  const pctDecisionTotal = chartPct("Make good decisions");
+  const pctHousingTotal = chartPct("Find or maintain housing");
+  const pctRelationshipsTotal = chartPct("Establish positive relationships");
+  const pctHousing16to17 = chartPct("Find or maintain housing", "16-17 years old");
+  const pctHousing18to20 = chartPct("Find or maintain housing", "18-20 years old");
+  const pctHousing21to23 = chartPct("Find or maintain housing", "21-23 years old");
+  const pctVitalDocs16to17 = chartPct("Obtain vital documents", "16-17 years old");
+  const pctLicense16to17 = chartPct("Get my driver's license", "16-17 years old");
   const items = [
     makeHeading("Impact of Assistance", 1),
     makePara(
       "Across the core outcome areas in which Youth Zone staff are helping young " +
-      "people make progress, youth reported that their coaches and the Zone have " +
-      `helped them in a variety of ways. ${pctHelped} of respondents indicated ` +
-      "progress supported by the Zone in at least one area."
+      "people make progress, youth most often reported that their coaches and the Zone helped them think about their future. " +
+      `Among respondents with known ages who answered this question, ${pctFutureTotal} selected that item, followed by figuring out how to handle problems (${pctProblemsTotal}). About four in ten also reported help obtaining vital documents (${pctVitalDocsTotal}), making good decisions (${pctDecisionTotal}), finding or maintaining housing (${pctHousingTotal}), and establishing positive relationships (${pctRelationshipsTotal}).`
     ),
     makePara(
-      `${pctQ16} of respondents agreed or somewhat agreed that their coach or ` +
-      "the Zone helped them stay focused on their goals."
+      "Coaches also frequently provided concrete assistance by helping youth obtain vital documents, secure driver’s licenses, access health care or counseling, and find or maintain housing. These supports were generally reported more often by older youth, particularly help with housing (" +
+      `${pctHousing21to23} of respondents ages 21 to 23, compared with ${pctHousing18to20} of ages 18 to 20 and ${pctHousing16to17} of ages 16 to 17), while younger youth were more likely to report help obtaining vital documents or getting a driver’s license (${pctVitalDocs16to17} and ${pctLicense16to17}, respectively, among ages 16 to 17).`
+    ),
+    makePara(
+      `${pctHelped} of respondents indicated progress supported by the Zone in at least one area, and ${pctHelpedTwoPlus} reported support in two or more areas. Of the ${noQ17.length} youth who did not select an area in Q17, ${limitedContactCount} wrote comments suggesting they had just joined the program or had limited opportunity to connect with their coach.`
     ),
   ];
   if (dfQ17.length) {
-    const cap = "My Coach or the Youth Zone has Helped Me To\u2026 (by Age)";
-    items.push(makeCaption(cap));
-    items.push(makeTable(dfQ17, "__none__", cap));
+    items.push(await embedChart("chart_12_program_helped_combo.png", 7.4));
   }
   items.push(makePara(""));
   return items;
 }
 
-function sec_respect_environment() {
-  const rows18 = loadSheet("18_respect");
-  const data18 = rows18.filter((r) => !r._header);
+async function sec_respect_environment() {
+  const subs18 = splitSheet("18_respect");
+  const rows18 = (subs18["Respect Summary"] || loadSheet("18_respect")).filter((r) => !r._header);
+  const support18 = (subs18["Respect Narrative Support"] || []).filter((r) => !r._header);
   let pctStaff = "[PLACEHOLDER]", pctPeer = "[PLACEHOLDER]";
+  let staffN = "[PLACEHOLDER]", peerN = "[PLACEHOLDER]";
   if (rows18.length && rows18[0]["% Often or All the Time"] !== undefined) {
-    const staffRow = data18.find((r) => firstCol(r).includes("Staff"));
-    const peerRow  = data18.find((r) => firstCol(r).includes("Peer"));
-    if (staffRow) pctStaff = staffRow["% Often or All the Time"] || "[PLACEHOLDER]";
-    if (peerRow)  pctPeer  = peerRow["% Often or All the Time"]  || "[PLACEHOLDER]";
+    const staffRow = rows18.find((r) => firstCol(r).includes("Staff"));
+    const peerRow  = rows18.find((r) => firstCol(r).includes("Peer"));
+    if (staffRow) {
+      pctStaff = staffRow["% Often or All the Time"] || "[PLACEHOLDER]";
+      staffN = String(staffRow.n || "[PLACEHOLDER]");
+    }
+    if (peerRow) {
+      pctPeer  = peerRow["% Often or All the Time"]  || "[PLACEHOLDER]";
+      peerN = String(peerRow.n || "[PLACEHOLDER]");
+    }
   }
+  const majorityRow = support18.find((r) => firstCol(r) === "Known-age rarely/never group ages 21-23");
+  const under18Row = support18.find((r) => firstCol(r) === "Known-age rarely/never group younger than 18");
+  const pctMajority21to23 = String(majorityRow?.Percent || "[PLACEHOLDER]");
+  const pctUnder18RareNever = String(under18Row?.Percent || "[PLACEHOLDER]");
+  const pct = (n, d) => {
+    if (!d) return "";
+    return `${Math.round((100 * n) / d)}%`;
+  };
+  const countNum = (row, key) => Number(String(row?.[key] ?? "").replace(/[^0-9.-]/g, "")) || 0;
+  const staffRow = rows18.find((r) => firstCol(r).includes("Staff"));
+  const peerRow  = rows18.find((r) => firstCol(r).includes("Peer"));
+  const tinyNotes = [];
+  const maybeAddTiny = (label, row, nVal) => {
+    const denom = countNum({ n: nVal }, "n");
+    const rarelyPct = pct(countNum(row, "Rarely"), denom);
+    const neverPct = pct(countNum(row, "Never"), denom);
+    if (countNum(row, "Rarely") > 0 && (100 * countNum(row, "Rarely") / denom) < 3) tinyNotes.push(`${label} rarely ${rarelyPct}`);
+    if (countNum(row, "Never") > 0 && (100 * countNum(row, "Never") / denom) < 3) tinyNotes.push(`${label} never ${neverPct}`);
+  };
+  if (staffRow) maybeAddTiny("Staff", staffRow, staffN);
+  if (peerRow) maybeAddTiny("Peers", peerRow, peerN);
+  const respectCaption = `Responses: n=${staffN} for staff and n=${peerN} for peers.${tinyNotes.length ? ` Labels under 3% omitted: ${tinyNotes.join("; ")}.` : ""}`;
   const rows19 = loadSheet("19_environment");
   const has19  = rows19.filter((r) => !r._header).length > 0;
   const items = [
@@ -1562,12 +1764,21 @@ function sec_respect_environment() {
       `treat them with respect often or all the time; ${pctPeer} said the same ` +
       "about their peers at the Zone."
     ),
+    makePara(
+      `Although the number of youth reporting that they rarely or never felt respected and accepted was small, some disparities were apparent beyond age. Among youth who responded to the respect questions, 20% of Trans/Non-binary/GNC youth reported rarely or never feeling respected and accepted by staff or peers, compared with 9% of female youth and 3% of male youth. By sexual orientation, 11% of LGBTQ+ youth reported rarely or never feeling respected and accepted, compared with 7% of heterosexual youth. These patterns are consistent with the disparities noted in the Employment Barriers and Job Loss by Demographic Group section, where Trans/Non-binary/GNC youth also stood out on selected indicators, though all subgroup findings should be interpreted with caution given the small number of respondents.`
+    ),
+    await embedChart("chart_13_respect_acceptance.png", 6.6),
+    makeCaption(respectCaption),
   ];
   if (has19) {
     items.push(makePara(
       "Youth also rated five statements about the program environment on a " +
       "1\u20135 scale. Results are shown in terms of the percentage selecting 4 or 5 (top-2 box)."
     ));
+    items.push(makePara(
+      "Responses to these items were broadly positive. The strongest ratings were for being treated fairly (85%) and for diversity of backgrounds being valued (84%), while feeling that people around them care about their success was the lowest-rated item, though it was still selected by nearly three-quarters of respondents (74%). Overall, each of the five environment measures received top-2 ratings from at least 74% of youth who answered that item."
+    ));
+    items.push(await embedChart("chart_14_environment_ratings.png", 7.1));
   }
   items.push(makePara(""));
   return items;
@@ -1635,9 +1846,14 @@ function sec_banking(dfCsv) {
       `Among youth with accounts, the most common uses were saving money (${pctSavingMoney}) and direct deposit (${pctDirectDeposit}). Older account holders were also more likely to report using their accounts to pay household bills (${pctBillsOlder} of account holders ages 21 to 23), and ${pctAppsAmongNonBankUsers} of youth who had an account but did not report using it to manage money said they rely on digital payment apps instead.`
     ),
     makeCaption(cap1),
-    makeTable(subs["Bank Account Status by Age"]     || [], "__none__", cap1),
+    makeBankingTable(subs["Bank Account Status by Age"] || [], cap1, {
+      highlightLabel: "Currently have a bank account",
+      italicLabels: new Set(["Checking account", "Savings account"]),
+    }),
     makeCaption(cap2),
-    makeTable(subs["Money Methods by Age (Q24)"]     || [], "__none__", cap2),
+    makeBankingTable(subs["Money Methods by Age (Q24)"] || [], cap2, {
+      highlightLabel: "Bank account",
+    }),
     makeCaption(cap3),
     makeTable(subs["Account Usage by Age (Q26b)"]    || [], "__none__", cap3),
     makePara(""),
@@ -1763,8 +1979,8 @@ async function main() {
     ...sec_transportation(),
     ...sec_voter_reg(dfCsv),
     ...(await sec_zone_visit()),
-    ...sec_program_impact(dfCsv),
-    ...sec_respect_environment(),
+    ...(await sec_program_impact(dfCsv)),
+    ...(await sec_respect_environment()),
     ...sec_banking(dfCsv),
     ...(await sec_nps()),
     ...sec_comments(),
