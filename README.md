@@ -25,7 +25,7 @@ prompts/           # Claude prompt templates
 | `03c_standardize_fields_412YZ.py` | Standardize 412YZ DOB and coach names |
 | `04_analyze_412YZ.py` / `04_analyze_IL.py` | Produce the analysis workbook and charts |
 | `05_report_412YZ.js` / `05_report_IL.js` | Generate the active report docx |
-| `99_draw_winners.py` | Randomly draw annual winners from paper 412YZ/YZ and IL surveys |
+| `99_draw_winners.py` | Randomly draw annual winners from paper surveys plus named online 412YZ/YZ and IL responses |
 
 ## Setup
 
@@ -46,4 +46,4 @@ After the survey CSVs have been compiled, run:
 python scripts/99_draw_winners.py
 ```
 
-The script prompts for the number of 412YZ/YZ winners and IL winners to draw. It samples without replacement from rows marked `source=paper` in `output/412YZ/survey_data_412YZ.csv` and `output/IL/survey_data_IL.csv`; online anonymous rows are excluded. It then writes the results to `output/winners/winners_<year>.csv`. If that annual file already exists, the script preserves it and writes a timestamped file instead.
+The script prompts for the number of 412YZ/YZ winners and IL winners to draw. It samples without replacement from all paper rows in `output/412YZ/survey_data_412YZ.csv` and `output/IL/survey_data_IL.csv`, plus online rows whose SurveyMonkey `Respondent ID` appears in the matching name-export workbooks under `data/online/has_name/`. Anonymous online responses remain excluded. The output CSV includes the matched online `respondent_id` and `raffle_name` fields so online winners can be identified, and it is written to `output/winners/winners_<year>.csv`. If that annual file already exists, the script preserves it and writes a timestamped file instead.
